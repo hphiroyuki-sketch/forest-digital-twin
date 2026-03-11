@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ForestScope — 森林デジタルツイン・ダッシュボード</title>
+  <meta name="description" content="グローバル森林データを可視化するSaaS型デジタルツイン・ダッシュボード。衛星画像オーバーレイ、3Dマップ、森林統計を統合。">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Roboto:wght@300;400;500;700&family=Noto+Sans+JP:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Outlined|Material+Icons" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <!-- ===== FULL-SCREEN MAP ===== -->
+  <div id="map-container">
+    <canvas id="map-canvas"></canvas>
+    <div id="map-overlay"></div>
+    <!-- Satellite overlay canvas -->
+    <canvas id="satellite-overlay-canvas"></canvas>
+  </div>
+
+  <!-- ===== TOP SEARCH BAR (Google Maps Style) ===== -->
+  <div id="search-bar">
+    <button id="menu-btn" class="icon-btn" aria-label="メニュー">
+      <span class="material-icons">menu</span>
+    </button>
+    <input type="text" id="search-input" placeholder="森林エリアを検索..." autocomplete="off">
+    <button id="search-btn" class="icon-btn" aria-label="検索">
+      <span class="material-icons">search</span>
+    </button>
+    <div class="search-divider"></div>
+    <button id="voice-btn" class="icon-btn" aria-label="音声検索">
+      <span class="material-icons">mic</span>
+    </button>
+  </div>
+
+  <!-- ===== TOP-RIGHT TOOLBAR ===== -->
+  <div id="top-right-toolbar">
+    <button id="layers-toggle-btn" class="toolbar-btn" aria-label="レイヤー">
+      <span class="material-icons">layers</span>
+    </button>
+    <button id="satellite-panel-toggle" class="toolbar-btn" aria-label="衛星データ">
+      <span class="material-icons">satellite_alt</span>
+    </button>
+    <button id="upload-toggle-btn" class="toolbar-btn" aria-label="データアップロード">
+      <span class="material-icons">cloud_upload</span>
+    </button>
+  </div>
+
+  <!-- ===== RIGHT-SIDE MAP CONTROLS (Google Maps Style) ===== -->
+  <div id="map-controls">
+    <button id="compass-btn" class="control-btn" aria-label="コンパス">
+      <span class="material-icons">explore</span>
+    </button>
+    <div class="control-separator"></div>
+    <button id="toggle-3d-btn" class="control-btn mode-btn" aria-label="3D表示切替">
+      <span class="btn-label">3D</span>
+    </button>
+    <div class="control-separator"></div>
+    <button id="zoom-in-btn" class="control-btn" aria-label="ズームイン">
+      <span class="material-icons">add</span>
+    </button>
+    <button id="zoom-out-btn" class="control-btn" aria-label="ズームアウト">
+      <span class="material-icons">remove</span>
+    </button>
+    <div class="control-separator"></div>
+    <button id="my-location-btn" class="control-btn" aria-label="現在地">
+      <span class="material-icons-outlined">my_location</span>
+    </button>
+  </div>
+
+  <!-- ===== BOTTOM-LEFT MINI MAP / EARTH VIEW ===== -->
+  <div id="mini-earth">
+    <canvas id="mini-earth-canvas"></canvas>
+    <div class="mini-earth-label">Earth</div>
+  </div>
+
+  <!-- ===== LEFT SIDE — FOREST DATA PANEL ===== -->
+  <div id="forest-panel" class="side-panel">
+    <div class="panel-header">
+      <span class="material-icons panel-icon">park</span>
+      <h2>Global Forest Overview</h2>
+      <button class="panel-close-btn icon-btn" data-panel="forest-panel">
+        <span class="material-icons">close</span>
+      </button>
+    </div>
+
+    <div class="panel-body">
+      <!-- Global Stats -->
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-value" id="total-trees">3.04T</div>
+          <div class="stat-label">世界の推定樹木数</div>
+          <div class="stat-trend up">
+            <span class="material-icons">trending_up</span> +0.3%
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="forest-area">4.06B ha</div>
+          <div class="stat-label">森林面積</div>
+          <div class="stat-trend down">
+            <span class="material-icons">trending_down</span> −4.7M ha/年
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="co2-absorption">2.6Gt</div>
+          <div class="stat-label">年間CO₂吸収量</div>
+          <div class="stat-trend neutral">
+            <span class="material-icons">trending_flat</span> 安定
+          </div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="species-count">73,300+</div>
+          <div class="stat-label">確認済み樹種数</div>
+          <div class="stat-trend up">
+            <span class="material-icons">trending_up</span> +9,200 新種
+          </div>
+        </div>
+      </div>
+
+      <!-- Regional Breakdown -->
+      <div class="section-title">
+        <span class="material-icons">public</span>
+        地域別森林データ
+      </div>
+      <div class="region-list" id="region-list">
+        <!-- Populated by JS -->
+      </div>
+
+      <!-- Top Species -->
+      <div class="section-title">
+        <span class="material-icons">eco</span>
+        主要樹種分布
+      </div>
+      <div class="species-list" id="species-list">
+        <!-- Populated by JS -->
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== RIGHT SIDE — SATELLITE LAYER PANEL ===== -->
+  <div id="satellite-panel" class="side-panel right-panel hidden">
+    <div class="panel-header">
+      <span class="material-icons panel-icon">satellite_alt</span>
+      <h2>衛星画像レイヤー</h2>
+      <button class="panel-close-btn icon-btn" data-panel="satellite-panel">
+        <span class="material-icons">close</span>
+      </button>
+    </div>
+
+    <div class="panel-body">
+      <!-- Active Layers -->
+      <div class="section-title">
+        <span class="material-icons">layers</span>
+        適用中のレイヤー
+      </div>
+      <div id="active-layers" class="active-layers-list">
+        <div class="empty-state">
+          <span class="material-icons">layer_clear</span>
+          <p>適用中のレイヤーはありません</p>
+        </div>
+      </div>
+
+      <!-- Add Layer Button -->
+      <button id="add-layer-btn" class="primary-btn">
+        <span class="material-icons">add_circle</span>
+        データの追加
+      </button>
+
+      <!-- Upload Section -->
+      <div class="section-title" style="margin-top: 20px;">
+        <span class="material-icons">cloud_upload</span>
+        独自データのアップロード
+      </div>
+      <div id="upload-dropzone" class="upload-dropzone">
+        <span class="material-icons upload-icon">backup</span>
+        <p>ファイルをドラッグ＆ドロップ</p>
+        <span class="upload-hint">GeoTIFF, Shapefile, KML, GeoJSON に対応</span>
+        <input type="file" id="file-input" multiple accept=".tif,.tiff,.shp,.kml,.kmz,.geojson,.json" hidden>
+        <button id="browse-btn" class="secondary-btn">ファイルを選択</button>
+      </div>
+      <div id="upload-progress" class="upload-progress hidden">
+        <div class="progress-bar"><div class="progress-fill"></div></div>
+        <span class="progress-text">処理中...</span>
+      </div>
+      <div id="uploaded-files" class="uploaded-files-list"></div>
+    </div>
+  </div>
+
+  <!-- ===== LAYER SELECTION MODAL ===== -->
+  <div id="layer-modal" class="modal-overlay hidden">
+    <div class="modal-container">
+      <div class="modal-header">
+        <h2>
+          <span class="material-icons">satellite_alt</span>
+          衛星データカタログ
+        </h2>
+        <button id="modal-close-btn" class="icon-btn">
+          <span class="material-icons">close</span>
+        </button>
+      </div>
+
+      <!-- Filter tabs -->
+      <div class="modal-tabs">
+        <button class="tab-btn active" data-category="all">すべて</button>
+        <button class="tab-btn" data-category="optical">光学画像</button>
+        <button class="tab-btn" data-category="vegetation">植生指数</button>
+        <button class="tab-btn" data-category="radar">レーダー</button>
+        <button class="tab-btn" data-category="terrain">地形</button>
+        <button class="tab-btn" data-category="other">その他</button>
+      </div>
+
+      <!-- Satellite Data Grid -->
+      <div class="modal-body">
+        <div id="satellite-catalog" class="satellite-grid">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== PREVIEW BAR (Bottom) ===== -->
+  <div id="preview-bar" class="hidden">
+    <div class="preview-info">
+      <span class="material-icons">visibility</span>
+      <div class="preview-text">
+        <strong id="preview-name">—</strong>
+        <span id="preview-desc">—</span>
+      </div>
+    </div>
+    <div class="preview-controls">
+      <div class="opacity-control">
+        <label>透明度</label>
+        <input type="range" id="preview-opacity" min="0" max="100" value="60">
+        <span id="opacity-value">60%</span>
+      </div>
+      <button id="apply-layer-btn" class="primary-btn apply-btn">
+        <span class="material-icons">check_circle</span>
+        この衛星画像を重ね合わせる
+      </button>
+      <button id="cancel-preview-btn" class="secondary-btn">
+        <span class="material-icons">cancel</span>
+        キャンセル
+      </button>
+    </div>
+  </div>
+
+  <!-- ===== MAP ATTRIBUTION ===== -->
+  <div id="map-attribution">
+    Map data ©2026 ForestScope | Imagery ©2026 JAXA, ESA, NASA | <a href="#">利用規約</a>
+  </div>
+
+  <!-- ===== TOAST NOTIFICATIONS ===== -->
+  <div id="toast-container"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
