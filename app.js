@@ -135,6 +135,15 @@ let clock;
 const labels = [];
 const TOTAL_TREES = FOREST_CLUSTERS.reduce((s, c) => s + c.count, 0);
 
+// Detailed forest scene
+let detailedForestGroup;
+let leafParticles;
+let animalMeshes = [];
+let butterflyMeshes = [];
+let healthLabels = [];
+const skyColor = new THREE.Color(0x87CEEB);
+const spaceColor = new THREE.Color(0x000008);
+
 // ============================================================
 // DOM HELPERS
 // ============================================================
@@ -154,6 +163,7 @@ document.addEventListener('DOMContentLoaded', () => {
   createSatelliteOverlay();
   createForestTrees();
   createRegionLabels();
+  createDetailedForest();
   renderRegions();
   renderSpecies();
   renderSatelliteCatalog();
@@ -170,7 +180,7 @@ function initScene() {
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0x000008);
 
-  camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.01, 100);
+  camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.0001, 100);
   camera.position.set(0, 0.8, 2.8);
 
   // WebGL Renderer
@@ -206,7 +216,7 @@ function initScene() {
   controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
   controls.dampingFactor = 0.06;
-  controls.minDistance = 1.15;
+  controls.minDistance = 1.002;
   controls.maxDistance = 8;
   controls.autoRotate = true;
   controls.autoRotateSpeed = 0.4;
@@ -487,6 +497,342 @@ function createRegionLabels() {
 }
 
 // ============================================================
+// DETAILED FOREST SCENE (Deep Zoom)
+// ============================================================
+function createDetailedForest() {
+  detailedForestGroup = new THREE.Group();
+  detailedForestGroup.visible = false;
+
+  // Position at Japan (lat:36, lng:137)
+  const centerPos = latLngToVec3(36, 137, EARTH_RADIUS);
+  detailedForestGroup.position.copy(centerPos);
+  detailedForestGroup.lookAt(new THREE.Vector3(0, 0, 0));
+  detailedForestGroup.rotateX(-Math.PI / 2);
+
+  // Forest floor
+  createForestFloor();
+  // Detailed trees with branches & leaves
+  createDetailedTrees();
+  // Leaf particle systems
+  createLeafParticles();
+  // Animals & insects
+  createAnimals();
+  // Health status labels
+  createHealthStatusLabels();
+
+  earthGroup.add(detailedForestGroup);
+}
+
+function createForestFloor() {
+  const floorSize = 0.06;
+  const geo = new THREE.PlaneGeometry(floorSize, floorSize, 32, 32);
+  geo.rotateX(-Math.PI / 2);
+  // Displacement for terrain undulation
+  const pos = geo.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), z = pos.getZ(i);
+    const h = Math.sin(x * 200) * Math.cos(z * 150) * 0.0004
+      + Math.sin(x * 80 + 1) * Math.cos(z * 120 + 2) * 0.0002;
+    pos.setY(i, pos.getY(i) + h);
+  }
+  geo.computeVertexNormals();
+
+  const mat = new THREE.MeshLambertMaterial({ color: 0x2d5a1e, transparent: true, opacity: 0 });
+  const floor = new THREE.Mesh(geo, mat);
+  floor.userData.type = 'floor';
+  detailedForestGroup.add(floor);
+
+  // Grass tufts (instanced small cones)
+  const grassGeo = new THREE.ConeGeometry(0.0002, 0.0008, 3);
+  grassGeo.translate(0, 0.0004, 0);
+  const grassMat = new THREE.MeshLambertMaterial({ color: 0x3a7d2c, transparent: true, opacity: 0 });
+  const grassCount = 2000;
+  const grass = new THREE.InstancedMesh(grassGeo, grassMat, grassCount);
+  const dummy = new THREE.Object3D();
+  const gc = new THREE.Color();
+  for (let i = 0; i < grassCount; i++) {
+    dummy.position.set(
+      (Math.random() - 0.5) * 0.05, 0,
+      (Math.random() - 0.5) * 0.05
+    );
+    dummy.rotation.y = Math.random() * Math.PI * 2;
+    dummy.scale.setScalar(0.3 + Math.random() * 1.2);
+    dummy.updateMatrix();
+    grass.setMatrixAt(i, dummy.matrix);
+    gc.setHSL(0.28 + Math.random() * 0.06, 0.6 + Math.random() * 0.3, 0.25 + Math.random() * 0.15);
+    grass.setColorAt(i, gc);
+  }
+  grass.instanceMatrix.needsUpdate = true;
+  grass.instanceColor.needsUpdate = true;
+  grass.userData.type = 'grass';
+  detailedForestGroup.add(grass);
+}
+
+function createDetailedTrees() {
+  const treeData = [];
+  const healthStates = ['healthy', 'healthy', 'healthy', 'healthy', 'healthy',
+    'healthy', 'healthy', 'stressed', 'stressed', 'sick'];
+  for (let i = 0; i < 60; i++) {
+    treeData.push({
+      x: (Math.random() - 0.5) * 0.045,
+      z: (Math.random() - 0.5) * 0.045,
+      height: 0.003 + Math.random() * 0.004,
+      health: healthStates[Math.floor(Math.random() * healthStates.length)],
+    });
+  }
+
+  const trunkMat = new THREE.MeshLambertMaterial({ color: 0x5D4037, transparent: true, opacity: 0 });
+
+  treeData.forEach(td => {
+    const tree = new THREE.Group();
+    tree.position.set(td.x, 0, td.z);
+    tree.userData = { health: td.health };
+
+    // Trunk
+    const tH = td.height * 0.55;
+    const tR = td.height * 0.035;
+    const trunk = new THREE.Mesh(
+      new THREE.CylinderGeometry(tR * 0.6, tR, tH, 6),
+      trunkMat
+    );
+    trunk.position.y = tH / 2;
+    tree.add(trunk);
+
+    // Branches (4-6)
+    const branchCount = 4 + Math.floor(Math.random() * 3);
+    for (let b = 0; b < branchCount; b++) {
+      const angle = (b / branchCount) * Math.PI * 2 + Math.random() * 0.4;
+      const bLen = td.height * 0.18 * (0.5 + Math.random());
+      const bR = tR * 0.3;
+      const branch = new THREE.Mesh(
+        new THREE.CylinderGeometry(bR * 0.4, bR, bLen, 4),
+        trunkMat
+      );
+      branch.position.y = tH * (0.45 + Math.random() * 0.45);
+      branch.position.x = Math.cos(angle) * tR * 2.5;
+      branch.position.z = Math.sin(angle) * tR * 2.5;
+      branch.rotation.z = Math.cos(angle) * 0.7;
+      branch.rotation.x = Math.sin(angle) * 0.7;
+      tree.add(branch);
+    }
+
+    // Leaf clusters
+    const leafColor = td.health === 'healthy' ? 0x228B22 :
+      td.health === 'stressed' ? 0xBDB76B : 0x8B6914;
+    const clusterCount = 6 + Math.floor(Math.random() * 5);
+    for (let c = 0; c < clusterCount; c++) {
+      const cSize = td.height * 0.12 * (0.5 + Math.random());
+      const cMat = new THREE.MeshLambertMaterial({
+        color: new THREE.Color(leafColor).offsetHSL(
+          (Math.random() - 0.5) * 0.05,
+          (Math.random() - 0.5) * 0.1,
+          (Math.random() - 0.5) * 0.1
+        ),
+        transparent: true,
+        opacity: 0,
+      });
+      const cluster = new THREE.Mesh(
+        new THREE.IcosahedronGeometry(cSize, 1),
+        cMat
+      );
+      cluster.position.y = tH * 0.6 + Math.random() * td.height * 0.4;
+      cluster.position.x = (Math.random() - 0.5) * td.height * 0.35;
+      cluster.position.z = (Math.random() - 0.5) * td.height * 0.35;
+      cluster.userData.type = 'leafCluster';
+      tree.add(cluster);
+    }
+
+    // Individual leaves (visible at extreme zoom)
+    const leafCount = 15 + Math.floor(Math.random() * 10);
+    for (let l = 0; l < leafCount; l++) {
+      const lSize = td.height * 0.015;
+      const leafShape = new THREE.PlaneGeometry(lSize, lSize * 1.6);
+      const leafM = new THREE.MeshLambertMaterial({
+        color: new THREE.Color(leafColor).offsetHSL(Math.random() * 0.04 - 0.02, 0, Math.random() * 0.1),
+        transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false,
+      });
+      const leaf = new THREE.Mesh(leafShape, leafM);
+      leaf.position.set(
+        (Math.random() - 0.5) * td.height * 0.3,
+        tH * 0.5 + Math.random() * td.height * 0.5,
+        (Math.random() - 0.5) * td.height * 0.3
+      );
+      leaf.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
+      leaf.userData.type = 'leaf';
+      tree.add(leaf);
+    }
+
+    // Insects on trunk (beetles)
+    const bugCount = Math.floor(Math.random() * 3);
+    for (let bg = 0; bg < bugCount; bg++) {
+      const bug = new THREE.Mesh(
+        new THREE.SphereGeometry(td.height * 0.006, 4, 3),
+        new THREE.MeshLambertMaterial({ color: 0x1a1a1a, transparent: true, opacity: 0 })
+      );
+      const bAngle = Math.random() * Math.PI * 2;
+      bug.position.set(
+        Math.cos(bAngle) * tR * 1.2,
+        tH * (0.2 + Math.random() * 0.5),
+        Math.sin(bAngle) * tR * 1.2
+      );
+      bug.userData.type = 'insect';
+      tree.add(bug);
+    }
+
+    detailedForestGroup.add(tree);
+  });
+}
+
+function createLeafParticles() {
+  const count = 8000;
+  const positions = new Float32Array(count * 3);
+  const colors = new Float32Array(count * 3);
+  const c = new THREE.Color();
+  for (let i = 0; i < count; i++) {
+    positions[i * 3] = (Math.random() - 0.5) * 0.05;
+    positions[i * 3 + 1] = 0.001 + Math.random() * 0.008;
+    positions[i * 3 + 2] = (Math.random() - 0.5) * 0.05;
+    c.setHSL(0.28 + Math.random() * 0.08, 0.5 + Math.random() * 0.4, 0.2 + Math.random() * 0.3);
+    colors[i * 3] = c.r; colors[i * 3 + 1] = c.g; colors[i * 3 + 2] = c.b;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  const mat = new THREE.PointsMaterial({
+    size: 0.0004, vertexColors: true, transparent: true, opacity: 0,
+    sizeAttenuation: true, depthWrite: false,
+  });
+  leafParticles = new THREE.Points(geo, mat);
+  detailedForestGroup.add(leafParticles);
+}
+
+function createAnimals() {
+  const bodyMat = new THREE.MeshLambertMaterial({ color: 0x8B6914, transparent: true, opacity: 0 });
+
+  // Deer (4)
+  for (let i = 0; i < 4; i++) {
+    const deer = new THREE.Group();
+    const bodyLen = 0.0012;
+    const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.0003, bodyLen, 4, 6), bodyMat);
+    body.rotation.z = Math.PI / 2;
+    body.position.y = 0.0008;
+    deer.add(body);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.00022, 5, 5), bodyMat);
+    head.position.set(bodyLen * 0.55, 0.001, 0);
+    deer.add(head);
+    // Antlers
+    const antlerMat = new THREE.MeshLambertMaterial({ color: 0x5D4037, transparent: true, opacity: 0 });
+    for (let a = -1; a <= 1; a += 2) {
+      const antler = new THREE.Mesh(new THREE.CylinderGeometry(0.00002, 0.00004, 0.0005, 3), antlerMat);
+      antler.position.set(bodyLen * 0.55, 0.0013, a * 0.0001);
+      antler.rotation.z = a * 0.4;
+      deer.add(antler);
+    }
+    // Legs
+    const legGeo = new THREE.CylinderGeometry(0.00004, 0.00004, 0.0007, 3);
+    const legPositions = [[-0.0004, 0.0001], [-0.0002, -0.0001], [0.0003, 0.0001], [0.0005, -0.0001]];
+    legPositions.forEach(([lx, lz]) => {
+      const leg = new THREE.Mesh(legGeo, bodyMat);
+      leg.position.set(lx, 0.00035, lz);
+      deer.add(leg);
+    });
+
+    deer.position.set(
+      (Math.random() - 0.5) * 0.035,
+      0,
+      (Math.random() - 0.5) * 0.035
+    );
+    deer.rotation.y = Math.random() * Math.PI * 2;
+    deer.userData.type = 'animal';
+    detailedForestGroup.add(deer);
+    animalMeshes.push(deer);
+  }
+
+  // Birds (6, above canopy)
+  const birdMat = new THREE.MeshLambertMaterial({ color: 0x2c2c2c, transparent: true, opacity: 0 });
+  for (let i = 0; i < 6; i++) {
+    const bird = new THREE.Group();
+    const bBody = new THREE.Mesh(new THREE.CapsuleGeometry(0.0001, 0.0003, 3, 4), birdMat);
+    bBody.rotation.z = Math.PI / 2;
+    bird.add(bBody);
+    for (let w = -1; w <= 1; w += 2) {
+      const wing = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.0006, 0.0002),
+        new THREE.MeshLambertMaterial({ color: 0x444444, side: THREE.DoubleSide, transparent: true, opacity: 0 })
+      );
+      wing.position.set(0, 0, w * 0.0003);
+      wing.userData.wingDir = w;
+      wing.userData.type = 'wing';
+      bird.add(wing);
+    }
+    bird.position.set(
+      (Math.random() - 0.5) * 0.04,
+      0.006 + Math.random() * 0.003,
+      (Math.random() - 0.5) * 0.04
+    );
+    bird.userData.type = 'bird';
+    bird.userData.baseY = bird.position.y;
+    bird.userData.phase = Math.random() * Math.PI * 2;
+    detailedForestGroup.add(bird);
+    animalMeshes.push(bird);
+  }
+
+  // Butterflies (10)
+  for (let i = 0; i < 10; i++) {
+    const bf = new THREE.Group();
+    const colors = [0xff6b35, 0xffdd00, 0x00bcd4, 0xe91e63, 0x9c27b0, 0xff9800];
+    const bfColor = colors[Math.floor(Math.random() * colors.length)];
+    const bfBody = new THREE.Mesh(
+      new THREE.CapsuleGeometry(0.00004, 0.00015, 2, 3),
+      new THREE.MeshLambertMaterial({ color: 0x222222, transparent: true, opacity: 0 })
+    );
+    bf.add(bfBody);
+    for (let w = -1; w <= 1; w += 2) {
+      const wing = new THREE.Mesh(
+        new THREE.CircleGeometry(0.00025, 5),
+        new THREE.MeshLambertMaterial({ color: bfColor, side: THREE.DoubleSide, transparent: true, opacity: 0 })
+      );
+      wing.position.set(0, 0, w * 0.00015);
+      wing.userData.wingDir = w;
+      wing.userData.type = 'bfWing';
+      bf.add(wing);
+    }
+    bf.position.set(
+      (Math.random() - 0.5) * 0.04,
+      0.001 + Math.random() * 0.004,
+      (Math.random() - 0.5) * 0.04
+    );
+    bf.userData.type = 'butterfly';
+    bf.userData.phase = Math.random() * Math.PI * 2;
+    bf.userData.basePos = bf.position.clone();
+    detailedForestGroup.add(bf);
+    butterflyMeshes.push(bf);
+  }
+}
+
+function createHealthStatusLabels() {
+  const trees = detailedForestGroup.children.filter(c => c.userData && c.userData.health);
+  const sampleTrees = trees.slice(0, 12);
+  sampleTrees.forEach(tree => {
+    const status = tree.userData.health;
+    const icon = status === 'healthy' ? '🟢' : status === 'stressed' ? '🟡' : '🔴';
+    const text = status === 'healthy' ? '健康' : status === 'stressed' ? '要注意' : '病害検出';
+    const extra = status === 'sick' ? '<br><small>キクイムシ被害の疑い</small>' : '';
+
+    const div = document.createElement('div');
+    div.className = 'health-label';
+    div.innerHTML = `<span class="health-icon">${icon}</span><span class="health-text">${text}${extra}</span>`;
+    div.style.opacity = '0';
+
+    const labelObj = new CSS2DObject(div);
+    const treeH = tree.children[0] ? tree.children[0].geometry.parameters.height || 0.003 : 0.003;
+    labelObj.position.set(0, treeH + 0.001, 0);
+    tree.add(labelObj);
+    healthLabels.push(labelObj);
+  });
+}
+
+// ============================================================
 // HELPERS
 // ============================================================
 function latLngToVec3(lat, lng, radius) {
@@ -530,6 +876,7 @@ function flyTo(lat, lng, distance = 1.8) {
 function animate() {
   requestAnimationFrame(animate);
   const delta = clock.getDelta();
+  const time = clock.getElapsedTime();
 
   // Rotate clouds slowly
   if (clouds) clouds.rotation.y += delta * 0.02;
@@ -541,6 +888,8 @@ function animate() {
   const dist = camera.position.length();
   updateTreeVisibility(dist);
   updateLabelVisibility(dist);
+  updateDetailedForest(dist, time, delta);
+  updateSceneBackground(dist);
 
   controls.update();
   renderer.render(scene, camera);
@@ -552,7 +901,6 @@ function animate() {
 // ============================================================
 function updateTreeVisibility(dist) {
   if (!treeCrowns || !treeTrunks) return;
-  // Trees become visible as you zoom in
   const nearThreshold = 2.2;
   const farThreshold = 3.2;
   let opacity = 0;
@@ -573,6 +921,101 @@ function updateLabelVisibility(dist) {
       el.style.display = 'none';
     }
   });
+}
+
+// ============================================================
+// LOD — DETAILED FOREST
+// ============================================================
+function updateDetailedForest(dist, time, delta) {
+  if (!detailedForestGroup) return;
+
+  // Forest appears when camera < 1.12
+  const showDist = 1.12;
+  const fullDist = 1.06;
+  const leafDist = 1.03;
+  const bugDist = 1.015;
+  const healthDist = 1.04;
+
+  if (dist > showDist) {
+    detailedForestGroup.visible = false;
+    return;
+  }
+  detailedForestGroup.visible = true;
+
+  // Base opacity for forest elements
+  const forestOpacity = Math.min(1, (showDist - dist) / (showDist - fullDist));
+  const leafOpacity = dist < leafDist ? Math.min(1, (leafDist - dist) / 0.01) : 0;
+  const bugOpacity = dist < bugDist ? Math.min(1, (bugDist - dist) / 0.005) : 0;
+  const animalOpacity = Math.min(1, forestOpacity * 1.2);
+
+  detailedForestGroup.traverse(child => {
+    if (!child.material) return;
+    const type = child.userData.type;
+    if (type === 'floor' || type === 'grass') {
+      child.material.opacity = forestOpacity;
+    } else if (type === 'leaf') {
+      child.material.opacity = leafOpacity;
+    } else if (type === 'insect') {
+      child.material.opacity = bugOpacity;
+    } else if (type === 'leafCluster') {
+      child.material.opacity = forestOpacity;
+    } else if (type === 'bfWing' || type === 'wing') {
+      child.material.opacity = animalOpacity;
+    } else if (child.material.transparent) {
+      child.material.opacity = forestOpacity;
+    }
+  });
+
+  // Leaf particles
+  if (leafParticles) leafParticles.material.opacity = forestOpacity * 0.7;
+
+  // Health labels
+  healthLabels.forEach(label => {
+    label.element.style.opacity = dist < healthDist ? Math.min(1, (healthDist - dist) / 0.015) : 0;
+  });
+
+  // Animate butterflies
+  butterflyMeshes.forEach(bf => {
+    const p = bf.userData.phase + time * 3;
+    bf.position.x = bf.userData.basePos.x + Math.sin(p) * 0.003;
+    bf.position.y = bf.userData.basePos.y + Math.sin(p * 1.3) * 0.001;
+    bf.position.z = bf.userData.basePos.z + Math.cos(p * 0.7) * 0.003;
+    bf.rotation.y = Math.sin(p) * 0.5;
+    bf.children.forEach(c => {
+      if (c.userData.type === 'bfWing') {
+        c.rotation.y = c.userData.wingDir * Math.sin(time * 12 + bf.userData.phase) * 0.8;
+      }
+    });
+  });
+
+  // Animate birds
+  animalMeshes.forEach(m => {
+    if (m.userData.type === 'bird') {
+      m.position.y = m.userData.baseY + Math.sin(time * 0.8 + m.userData.phase) * 0.0005;
+      m.position.x += Math.sin(time * 0.3 + m.userData.phase) * delta * 0.0005;
+      m.children.forEach(c => {
+        if (c.userData.type === 'wing') {
+          c.rotation.x = c.userData.wingDir * Math.sin(time * 6 + m.userData.phase) * 0.5;
+        }
+      });
+    }
+  });
+}
+
+function updateSceneBackground(dist) {
+  // Transition from space-black to sky-blue when zoomed close
+  if (dist < 1.15 && dist > 1.0) {
+    const t = Math.min(1, (1.15 - dist) / 0.1);
+    scene.background.lerpColors(spaceColor, skyColor, t);
+    if (stars) stars.material.opacity = 0.85 * (1 - t);
+    if (clouds) clouds.material.opacity = 0.25 * (1 - t * 0.8);
+  } else if (dist <= 1.0) {
+    scene.background.copy(skyColor);
+    if (stars) stars.material.opacity = 0;
+  } else {
+    scene.background.copy(spaceColor);
+    if (stars) stars.material.opacity = 0.85;
+  }
 }
 
 // ============================================================
