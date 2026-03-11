@@ -1,161 +1,94 @@
 /* ============================================================
    ForestScope — 森林デジタルツイン・ダッシュボード
-   Main Application Logic
+   Three.js 3D Globe + Full Dashboard Logic
    ============================================================ */
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+
+// ============================================================
+// CONSTANTS
+// ============================================================
+const EARTH_RADIUS = 1;
+const CLOUD_RADIUS = 1.003;
+const ATMO_RADIUS = 1.12;
+const TEXTURE_BASE = 'https://unpkg.com/three-globe@2.31.1/example/img/';
 
 // ============================================================
 // DATA — Satellite Catalog
 // ============================================================
 const SATELLITE_DATA = [
   {
-    id: 'sentinel2-rgb',
-    name: 'Sentinel-2 RGB',
-    category: 'optical',
+    id: 'sentinel2-rgb', name: 'Sentinel-2 RGB', category: 'optical',
     description: 'ESAの光学衛星。10m解像度のRGB真カラー画像で、森林被覆や土地利用の変化を可視化。',
-    resolution: '10m',
-    source: 'ESA Copernicus',
-    sourceUrl: 'https://scihub.copernicus.eu/',
-    free: true,
-    color: [34, 139, 34]
+    resolution: '10m', source: 'ESA Copernicus', sourceUrl: 'https://scihub.copernicus.eu/', free: true, color: [34, 139, 34]
   },
   {
-    id: 'landsat8-oli',
-    name: 'Landsat 8 OLI',
-    category: 'optical',
+    id: 'landsat8-oli', name: 'Landsat 8 OLI', category: 'optical',
     description: 'NASA/USGSの高精度光学センサー。30m解像度で森林の広域モニタリングに最適。',
-    resolution: '30m',
-    source: 'USGS EarthExplorer',
-    sourceUrl: 'https://earthexplorer.usgs.gov/',
-    free: true,
-    color: [70, 130, 180]
+    resolution: '30m', source: 'USGS EarthExplorer', sourceUrl: 'https://earthexplorer.usgs.gov/', free: true, color: [70, 130, 180]
   },
   {
-    id: 'modis-terra',
-    name: 'MODIS Terra',
-    category: 'optical',
+    id: 'modis-terra', name: 'MODIS Terra', category: 'optical',
     description: 'NASAのTerra衛星搭載。250m~1km解像度で全球を毎日観測。火災検知にも利用。',
-    resolution: '250m–1km',
-    source: 'NASA Worldview',
-    sourceUrl: 'https://worldview.earthdata.nasa.gov/',
-    free: true,
-    color: [255, 140, 0]
+    resolution: '250m–1km', source: 'NASA Worldview', sourceUrl: 'https://worldview.earthdata.nasa.gov/', free: true, color: [255, 140, 0]
   },
   {
-    id: 'ndvi-sentinel',
-    name: 'NDVI (Sentinel-2)',
-    category: 'vegetation',
+    id: 'ndvi-sentinel', name: 'NDVI (Sentinel-2)', category: 'vegetation',
     description: '正規化植生指数。植物の活性度を赤〜緑のカラースケールでマッピング。森林の健康状態を即座に把握。',
-    resolution: '10m',
-    source: 'Google Earth Engine',
-    sourceUrl: 'https://earthengine.google.com/',
-    free: true,
-    color: [0, 180, 0]
+    resolution: '10m', source: 'Google Earth Engine', sourceUrl: 'https://earthengine.google.com/', free: true, color: [0, 180, 0]
   },
   {
-    id: 'evi-modis',
-    name: 'EVI (MODIS)',
-    category: 'vegetation',
+    id: 'evi-modis', name: 'EVI (MODIS)', category: 'vegetation',
     description: '強化植生指数。NDVIより大気補正に優れ、密生林のバイオマス推定に高精度。',
-    resolution: '250m',
-    source: 'NASA LP DAAC',
-    sourceUrl: 'https://lpdaac.usgs.gov/',
-    free: true,
-    color: [0, 128, 64]
+    resolution: '250m', source: 'NASA LP DAAC', sourceUrl: 'https://lpdaac.usgs.gov/', free: true, color: [0, 128, 64]
   },
   {
-    id: 'lai-sentinel',
-    name: 'LAI (葉面積指数)',
-    category: 'vegetation',
+    id: 'lai-sentinel', name: 'LAI (葉面積指数)', category: 'vegetation',
     description: '単位面積あたりの葉面積を推定。森林の光合成能力やCO₂吸収量の推定に不可欠。',
-    resolution: '20m',
-    source: 'Copernicus Global Land',
-    sourceUrl: 'https://land.copernicus.eu/',
-    free: true,
-    color: [50, 205, 50]
+    resolution: '20m', source: 'Copernicus Global Land', sourceUrl: 'https://land.copernicus.eu/', free: true, color: [50, 205, 50]
   },
   {
-    id: 'sar-sentinel1',
-    name: 'Sentinel-1 SAR',
-    category: 'radar',
+    id: 'sar-sentinel1', name: 'Sentinel-1 SAR', category: 'radar',
     description: 'ESAのCバンドSAR。雲を透過し、全天候型で森林構造やバイオマスの変動を検出。',
-    resolution: '10m',
-    source: 'ESA Copernicus',
-    sourceUrl: 'https://scihub.copernicus.eu/',
-    free: true,
-    color: [100, 100, 180]
+    resolution: '10m', source: 'ESA Copernicus', sourceUrl: 'https://scihub.copernicus.eu/', free: true, color: [100, 100, 180]
   },
   {
-    id: 'alos2-palsar',
-    name: 'ALOS-2 PALSAR-2',
-    category: 'radar',
+    id: 'alos2-palsar', name: 'ALOS-2 PALSAR-2', category: 'radar',
     description: 'JAXAのLバンドSAR。森林のバイオマスを高精度に推定。違法伐採の監視にも活用。',
-    resolution: '10m',
-    source: 'JAXA Earth API',
-    sourceUrl: 'https://www.eorc.jaxa.jp/',
-    free: true,
-    color: [70, 70, 150]
+    resolution: '10m', source: 'JAXA Earth API', sourceUrl: 'https://www.eorc.jaxa.jp/', free: true, color: [70, 70, 150]
   },
   {
-    id: 'srtm-dem',
-    name: 'SRTM DEM (標高)',
-    category: 'terrain',
+    id: 'srtm-dem', name: 'SRTM DEM (標高)', category: 'terrain',
     description: 'NASAのシャトルレーダーで取得した全球標高データ。傾斜や流域解析で林業計画を支援。',
-    resolution: '30m',
-    source: 'USGS',
-    sourceUrl: 'https://www.usgs.gov/centers/eros',
-    free: true,
-    color: [139, 90, 43]
+    resolution: '30m', source: 'USGS', sourceUrl: 'https://www.usgs.gov/centers/eros', free: true, color: [139, 90, 43]
   },
   {
-    id: 'slope-terrain',
-    name: '傾斜角マップ',
-    category: 'terrain',
+    id: 'slope-terrain', name: '傾斜角マップ', category: 'terrain',
     description: 'DEMから算出した傾斜角の可視化。急傾斜地の林業機械到達性や崩壊リスク評価に使用。',
-    resolution: '30m',
-    source: 'Google Earth Engine',
-    sourceUrl: 'https://earthengine.google.com/',
-    free: true,
-    color: [160, 82, 45]
+    resolution: '30m', source: 'Google Earth Engine', sourceUrl: 'https://earthengine.google.com/', free: true, color: [160, 82, 45]
   },
   {
-    id: 'gfc-hansen',
-    name: 'Global Forest Change',
-    category: 'other',
+    id: 'gfc-hansen', name: 'Global Forest Change', category: 'other',
     description: 'Hansen et al.の森林減少・増加マップ。2000年〜現在までの年次森林変動を可視化。',
-    resolution: '30m',
-    source: 'University of Maryland',
-    sourceUrl: 'https://glad.umd.edu/dataset/gfw',
-    free: true,
-    color: [220, 20, 60]
+    resolution: '30m', source: 'University of Maryland', sourceUrl: 'https://glad.umd.edu/dataset/gfw', free: true, color: [220, 20, 60]
   },
   {
-    id: 'viirs-fire',
-    name: 'VIIRS Active Fire',
-    category: 'other',
+    id: 'viirs-fire', name: 'VIIRS Active Fire', category: 'other',
     description: '準リアルタイムの熱異常検知。森林火災の早期発見と被害範囲の推定に不可欠。',
-    resolution: '375m',
-    source: 'NASA FIRMS',
-    sourceUrl: 'https://firms.modaps.eosdis.nasa.gov/',
-    free: true,
-    color: [255, 69, 0]
-  }
+    resolution: '375m', source: 'NASA FIRMS', sourceUrl: 'https://firms.modaps.eosdis.nasa.gov/', free: true, color: [255, 69, 0]
+  },
 ];
 
-// ============================================================
-// DATA — Regional Forest Data
-// ============================================================
 const REGIONS_DATA = [
-  { flag: '🌎', name: '南アメリカ', trees: '392B', area: '842M ha', pct: 82 },
-  { flag: '🌍', name: 'アフリカ', trees: '379B', area: '636M ha', pct: 75 },
-  { flag: '🌏', name: 'アジア', trees: '400B', area: '593M ha', pct: 72 },
-  { flag: '🌎', name: '北アメリカ', trees: '318B', area: '753M ha', pct: 70 },
-  { flag: '🌍', name: 'ヨーロッパ', trees: '160B', area: '1,017M ha', pct: 65 },
-  { flag: '🌏', name: 'オセアニア', trees: '53B', area: '174M ha', pct: 40 },
+  { flag: '🌎', name: '南アメリカ', trees: '392B', area: '842M ha', pct: 82, lat: -10, lng: -55 },
+  { flag: '🌍', name: 'アフリカ', trees: '379B', area: '636M ha', pct: 75, lat: 0, lng: 22 },
+  { flag: '🌏', name: 'アジア', trees: '400B', area: '593M ha', pct: 72, lat: 30, lng: 105 },
+  { flag: '🌎', name: '北アメリカ', trees: '318B', area: '753M ha', pct: 70, lat: 48, lng: -100 },
+  { flag: '🌍', name: 'ヨーロッパ', trees: '160B', area: '1,017M ha', pct: 65, lat: 52, lng: 15 },
+  { flag: '🌏', name: 'オセアニア', trees: '53B', area: '174M ha', pct: 40, lat: -25, lng: 135 },
 ];
 
-// ============================================================
-// DATA — Tree Species
-// ============================================================
 const SPECIES_DATA = [
   { name: 'スプルース (Picea)', count: '約 500B 本', pct: '16.4%', emoji: '🌲', color: '#1b5e20' },
   { name: 'マツ (Pinus)', count: '約 440B 本', pct: '14.5%', emoji: '🌲', color: '#2e7d32' },
@@ -167,24 +100,43 @@ const SPECIES_DATA = [
   { name: 'スギ (Cryptomeria)', count: '約 12B 本', pct: '0.4%', emoji: '🌲', color: '#a5d6a7' },
 ];
 
+// Forest cluster locations for 3D tree instances
+const FOREST_CLUSTERS = [
+  { name: 'アマゾン', lat: -3, lng: -60, spread: 15, count: 800, heightScale: 1.0 },
+  { name: 'コンゴ盆地', lat: 0, lng: 22, spread: 10, count: 600, heightScale: 0.8 },
+  { name: '東南アジア', lat: 5, lng: 108, spread: 10, count: 500, heightScale: 0.7 },
+  { name: 'タイガ (東)', lat: 58, lng: 100, spread: 25, count: 700, heightScale: 0.6 },
+  { name: 'タイガ (西)', lat: 60, lng: 50, spread: 15, count: 500, heightScale: 0.5 },
+  { name: '北米西部', lat: 48, lng: -122, spread: 8, count: 300, heightScale: 0.7 },
+  { name: '北米東部', lat: 40, lng: -80, spread: 8, count: 300, heightScale: 0.6 },
+  { name: '日本', lat: 36, lng: 137, spread: 5, count: 400, heightScale: 0.8 },
+  { name: '北欧', lat: 62, lng: 18, spread: 8, count: 400, heightScale: 0.5 },
+  { name: 'オーストラリア', lat: -28, lng: 148, spread: 8, count: 200, heightScale: 0.4 },
+];
+
 // ============================================================
 // STATE
 // ============================================================
 let state = {
-  is3D: false,
+  is3D: true,
   currentPreview: null,
   activeLayers: [],
   uploadedFiles: [],
-  mapRotation: 0,
-  mapTilt: 0,
-  mapZoom: 3,
-  mapCenter: { lat: 35, lng: 137 },
-  isDragging: false,
-  lastMouse: { x: 0, y: 0 },
 };
 
 // ============================================================
-// DOM References
+// THREE.JS GLOBALS
+// ============================================================
+let scene, camera, renderer, labelRenderer, controls;
+let earthGroup, earth, clouds, atmosphere, stars;
+let treeTrunks, treeCrowns;
+let overlayMesh;
+let clock;
+const labels = [];
+const TOTAL_TREES = FOREST_CLUSTERS.reduce((s, c) => s + c.count, 0);
+
+// ============================================================
+// DOM HELPERS
 // ============================================================
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => [...document.querySelectorAll(sel)];
@@ -193,358 +145,539 @@ const $$ = (sel) => [...document.querySelectorAll(sel)];
 // INIT
 // ============================================================
 document.addEventListener('DOMContentLoaded', () => {
-  initMap();
-  initMiniEarth();
+  clock = new THREE.Clock();
+  initScene();
+  createStarField();
+  createEarth();
+  createAtmosphere();
+  createClouds();
+  createSatelliteOverlay();
+  createForestTrees();
+  createRegionLabels();
   renderRegions();
   renderSpecies();
   renderSatelliteCatalog();
   bindEvents();
-  animateForestDots();
+  animate();
 });
 
 // ============================================================
-// MAP — Canvas rendering (simulated satellite view)
+// SCENE SETUP
 // ============================================================
-function initMap() {
-  const canvas = $('#map-canvas');
-  const ctx = canvas.getContext('2d');
-  resizeCanvas(canvas);
+function initScene() {
+  const container = $('#globe-container');
+
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x000008);
+
+  camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.01, 100);
+  camera.position.set(0, 0.8, 2.8);
+
+  // WebGL Renderer
+  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.2;
+  container.appendChild(renderer.domElement);
+
+  // CSS2D Renderer (for labels)
+  labelRenderer = new CSS2DRenderer();
+  labelRenderer.setSize(window.innerWidth, window.innerHeight);
+  labelRenderer.domElement.style.position = 'absolute';
+  labelRenderer.domElement.style.top = '0';
+  labelRenderer.domElement.style.left = '0';
+  labelRenderer.domElement.style.pointerEvents = 'none';
+  container.appendChild(labelRenderer.domElement);
+
+  // Lights
+  const sunLight = new THREE.DirectionalLight(0xffffff, 2.0);
+  sunLight.position.set(5, 3, 5);
+  scene.add(sunLight);
+
+  const ambientLight = new THREE.AmbientLight(0x222244, 0.8);
+  scene.add(ambientLight);
+
+  const rimLight = new THREE.DirectionalLight(0x4488ff, 0.3);
+  rimLight.position.set(-3, -1, -3);
+  scene.add(rimLight);
+
+  // Controls
+  controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.06;
+  controls.minDistance = 1.15;
+  controls.maxDistance = 8;
+  controls.autoRotate = true;
+  controls.autoRotateSpeed = 0.4;
+  controls.enablePan = false;
+  controls.rotateSpeed = 0.5;
+  controls.zoomSpeed = 0.8;
+
+  // Earth group (holds earth, clouds, trees, etc.)
+  earthGroup = new THREE.Group();
+  scene.add(earthGroup);
+
+  // Handle resize
   window.addEventListener('resize', () => {
-    resizeCanvas(canvas);
-    drawMap(ctx, canvas);
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    labelRenderer.setSize(window.innerWidth, window.innerHeight);
   });
-  drawMap(ctx, canvas);
+}
 
-  // Mouse interaction for map dragging
-  canvas.addEventListener('mousedown', (e) => {
-    state.isDragging = true;
-    state.lastMouse = { x: e.clientX, y: e.clientY };
-    canvas.style.cursor = 'grabbing';
+// ============================================================
+// EARTH
+// ============================================================
+function createEarth() {
+  const loader = new THREE.TextureLoader();
+
+  const earthGeo = new THREE.SphereGeometry(EARTH_RADIUS, 96, 96);
+  const earthMat = new THREE.MeshPhongMaterial({
+    map: loader.load(TEXTURE_BASE + 'earth-blue-marble.jpg'),
+    bumpMap: loader.load(TEXTURE_BASE + 'earth-topology.png'),
+    bumpScale: 0.015,
+    specularMap: loader.load(TEXTURE_BASE + 'earth-water.png'),
+    specular: new THREE.Color(0x444444),
+    shininess: 15,
   });
-  window.addEventListener('mousemove', (e) => {
-    if (!state.isDragging) return;
-    const dx = e.clientX - state.lastMouse.x;
-    const dy = e.clientY - state.lastMouse.y;
-    state.mapCenter.lng -= dx * 0.15;
-    state.mapCenter.lat += dy * 0.15;
-    state.lastMouse = { x: e.clientX, y: e.clientY };
-    if (state.is3D) {
-      state.mapRotation += dx * 0.2;
+
+  earth = new THREE.Mesh(earthGeo, earthMat);
+  earthGroup.add(earth);
+}
+
+// ============================================================
+// ATMOSPHERE
+// ============================================================
+function createAtmosphere() {
+  // Inner atmosphere glow on earth surface
+  const innerGeo = new THREE.SphereGeometry(EARTH_RADIUS + 0.001, 64, 64);
+  const innerMat = new THREE.ShaderMaterial({
+    vertexShader: `
+      varying vec3 vNormal;
+      varying vec3 vPosition;
+      void main() {
+        vNormal = normalize(normalMatrix * normal);
+        vPosition = (modelViewMatrix * vec4(position, 1.0)).xyz;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      varying vec3 vNormal;
+      varying vec3 vPosition;
+      void main() {
+        vec3 viewDir = normalize(-vPosition);
+        float rim = 1.0 - max(0.0, dot(vNormal, viewDir));
+        float intensity = pow(rim, 3.0) * 0.65;
+        gl_FragColor = vec4(0.35, 0.6, 1.0, intensity);
+      }
+    `,
+    transparent: true,
+    depthWrite: false,
+    side: THREE.FrontSide,
+    blending: THREE.AdditiveBlending,
+  });
+  const innerAtmo = new THREE.Mesh(innerGeo, innerMat);
+  earthGroup.add(innerAtmo);
+
+  // Outer atmosphere glow
+  const outerGeo = new THREE.SphereGeometry(ATMO_RADIUS, 64, 64);
+  const outerMat = new THREE.ShaderMaterial({
+    vertexShader: `
+      varying vec3 vNormal;
+      varying vec3 vPosition;
+      void main() {
+        vNormal = normalize(normalMatrix * normal);
+        vPosition = (modelViewMatrix * vec4(position, 1.0)).xyz;
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+      }
+    `,
+    fragmentShader: `
+      varying vec3 vNormal;
+      varying vec3 vPosition;
+      void main() {
+        vec3 viewDir = normalize(-vPosition);
+        float rim = 1.0 - max(0.0, dot(vNormal, viewDir));
+        float intensity = pow(rim, 1.8) * 0.4;
+        gl_FragColor = vec4(0.3, 0.55, 1.0, intensity);
+      }
+    `,
+    transparent: true,
+    depthWrite: false,
+    side: THREE.BackSide,
+    blending: THREE.AdditiveBlending,
+  });
+  atmosphere = new THREE.Mesh(outerGeo, outerMat);
+  earthGroup.add(atmosphere);
+}
+
+// ============================================================
+// CLOUDS
+// ============================================================
+function createClouds() {
+  const loader = new THREE.TextureLoader();
+  const cloudGeo = new THREE.SphereGeometry(CLOUD_RADIUS, 64, 64);
+  const cloudMat = new THREE.MeshPhongMaterial({
+    map: loader.load(TEXTURE_BASE + 'earth-clouds.png'),
+    transparent: true,
+    opacity: 0.25,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+  });
+  clouds = new THREE.Mesh(cloudGeo, cloudMat);
+  earthGroup.add(clouds);
+}
+
+// ============================================================
+// STAR FIELD
+// ============================================================
+function createStarField() {
+  const count = 8000;
+  const positions = new Float32Array(count * 3);
+  const sizes = new Float32Array(count);
+
+  for (let i = 0; i < count; i++) {
+    const r = 30 + Math.random() * 40;
+    const theta = Math.random() * Math.PI * 2;
+    const phi = Math.acos(2 * Math.random() - 1);
+    positions[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+    positions[i * 3 + 1] = r * Math.sin(phi) * Math.sin(theta);
+    positions[i * 3 + 2] = r * Math.cos(phi);
+    sizes[i] = Math.random() * 1.5 + 0.5;
+  }
+
+  const starGeo = new THREE.BufferGeometry();
+  starGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  starGeo.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+
+  const starMat = new THREE.PointsMaterial({
+    color: 0xffffff,
+    size: 0.08,
+    sizeAttenuation: true,
+    transparent: true,
+    opacity: 0.85,
+  });
+
+  stars = new THREE.Points(starGeo, starMat);
+  scene.add(stars);
+}
+
+// ============================================================
+// SATELLITE OVERLAY (for preview/apply)
+// ============================================================
+function createSatelliteOverlay() {
+  const overlayGeo = new THREE.SphereGeometry(EARTH_RADIUS + 0.002, 96, 96);
+  const overlayCanvas = document.createElement('canvas');
+  overlayCanvas.width = 2048;
+  overlayCanvas.height = 1024;
+  const overlayTexture = new THREE.CanvasTexture(overlayCanvas);
+  const overlayMat = new THREE.MeshBasicMaterial({
+    map: overlayTexture,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    blending: THREE.NormalBlending,
+  });
+  overlayMesh = new THREE.Mesh(overlayGeo, overlayMat);
+  overlayMesh.userData = { canvas: overlayCanvas, texture: overlayTexture };
+  earthGroup.add(overlayMesh);
+}
+
+// ============================================================
+// 3D FOREST TREES (InstancedMesh)
+// ============================================================
+function createForestTrees() {
+  // Tree crown (cone)
+  const crownGeo = new THREE.ConeGeometry(0.004, 0.012, 5);
+  crownGeo.translate(0, 0.006, 0);
+  const crownMat = new THREE.MeshLambertMaterial({
+    color: 0x228B22,
+    transparent: true,
+    opacity: 0,
+  });
+  treeCrowns = new THREE.InstancedMesh(crownGeo, crownMat, TOTAL_TREES);
+
+  // Tree trunk (cylinder)
+  const trunkGeo = new THREE.CylinderGeometry(0.0006, 0.001, 0.005, 4);
+  trunkGeo.translate(0, -0.0015, 0);
+  const trunkMat = new THREE.MeshLambertMaterial({
+    color: 0x5D4037,
+    transparent: true,
+    opacity: 0,
+  });
+  treeTrunks = new THREE.InstancedMesh(trunkGeo, trunkMat, TOTAL_TREES);
+
+  // Place trees
+  let idx = 0;
+  const dummy = new THREE.Object3D();
+  const colorVariation = new THREE.Color();
+
+  FOREST_CLUSTERS.forEach(cluster => {
+    for (let i = 0; i < cluster.count; i++) {
+      // Random position within cluster spread
+      const lat = cluster.lat + (Math.random() - 0.5) * cluster.spread * 2;
+      const lng = cluster.lng + (Math.random() - 0.5) * cluster.spread * 2;
+      const pos = latLngToVec3(lat, lng, EARTH_RADIUS);
+
+      // Orient tree outward from globe center
+      dummy.position.copy(pos);
+      dummy.lookAt(0, 0, 0);
+      dummy.rotateX(Math.PI / 2);
+
+      // Random scale variation
+      const scale = (0.6 + Math.random() * 0.8) * cluster.heightScale;
+      dummy.scale.set(scale, scale, scale);
+      dummy.updateMatrix();
+
+      treeCrowns.setMatrixAt(idx, dummy.matrix);
+      treeTrunks.setMatrixAt(idx, dummy.matrix);
+
+      // Crown color variation (darker/lighter greens)
+      const hue = 0.28 + (Math.random() - 0.5) * 0.08;
+      const sat = 0.6 + Math.random() * 0.3;
+      const light = 0.2 + Math.random() * 0.25;
+      colorVariation.setHSL(hue, sat, light);
+      treeCrowns.setColorAt(idx, colorVariation);
+
+      idx++;
     }
-    drawMap(ctx, canvas);
   });
-  window.addEventListener('mouseup', () => {
-    state.isDragging = false;
-    canvas.style.cursor = 'grab';
-  });
-  canvas.style.cursor = 'grab';
 
-  // Mouse wheel zoom
-  canvas.addEventListener('wheel', (e) => {
-    e.preventDefault();
-    state.mapZoom = Math.max(1, Math.min(20, state.mapZoom + (e.deltaY > 0 ? -0.3 : 0.3)));
-    drawMap(ctx, canvas);
-  }, { passive: false });
+  treeCrowns.instanceMatrix.needsUpdate = true;
+  treeCrowns.instanceColor.needsUpdate = true;
+  treeTrunks.instanceMatrix.needsUpdate = true;
+
+  earthGroup.add(treeCrowns);
+  earthGroup.add(treeTrunks);
 }
 
-function resizeCanvas(canvas) {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
-}
-
-function drawMap(ctx, canvas) {
-  const w = canvas.width;
-  const h = canvas.height;
-
-  // Deep ocean background
-  const bgGrad = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w * 0.8);
-  bgGrad.addColorStop(0, '#0d2137');
-  bgGrad.addColorStop(0.5, '#142d4c');
-  bgGrad.addColorStop(1, '#0a1628');
-  ctx.fillStyle = bgGrad;
-  ctx.fillRect(0, 0, w, h);
-
-  // Save context for 3D tilt
-  ctx.save();
-  if (state.is3D) {
-    ctx.translate(w / 2, h / 2);
-    ctx.transform(1, 0, 0, 0.7, 0, 0); // perspective
-    ctx.translate(-w / 2, -h / 2);
-  }
-
-  // Draw continental shapes (simplified)
-  drawContinents(ctx, w, h);
-
-  // Draw forest density heatmap
-  drawForestHeatmap(ctx, w, h);
-
-  // Draw grid lines
-  drawGridLines(ctx, w, h);
-
-  ctx.restore();
-
-  // Draw forest dots (data points)
-  drawDataPoints(ctx, w, h);
-
-  // Cloud layer (subtle)
-  drawClouds(ctx, w, h);
-}
-
-function drawContinents(ctx, w, h) {
-  const ox = -state.mapCenter.lng * state.mapZoom * 0.5;
-  const oy = state.mapCenter.lat * state.mapZoom * 0.5;
-  const zoom = state.mapZoom;
-
-  // Continent definitions (simplified polygons in screen %)
-  const continents = [
-    // North America
-    { points: [[0.15, 0.15], [0.35, 0.12], [0.38, 0.25], [0.32, 0.38], [0.20, 0.42], [0.12, 0.30]], color: '#1a3a1a' },
-    // South America
-    { points: [[0.22, 0.48], [0.30, 0.45], [0.33, 0.55], [0.30, 0.72], [0.24, 0.78], [0.20, 0.65]], color: '#0f3a0f' },
-    // Africa
-    { points: [[0.45, 0.30], [0.55, 0.28], [0.58, 0.40], [0.55, 0.62], [0.48, 0.65], [0.43, 0.50]], color: '#1a3a15' },
-    // Europe
-    { points: [[0.44, 0.12], [0.56, 0.10], [0.58, 0.22], [0.52, 0.30], [0.44, 0.28]], color: '#1f3f1f' },
-    // Asia
-    { points: [[0.56, 0.10], [0.82, 0.12], [0.85, 0.30], [0.78, 0.42], [0.60, 0.38], [0.58, 0.22]], color: '#173517' },
-    // Japan
-    { points: [[0.82, 0.26], [0.84, 0.24], [0.85, 0.30], [0.83, 0.34], [0.81, 0.30]], color: '#1a4a1a' },
-    // Southeast Asia
-    { points: [[0.72, 0.40], [0.80, 0.42], [0.82, 0.52], [0.76, 0.56], [0.70, 0.48]], color: '#143514' },
-    // Australia
-    { points: [[0.78, 0.58], [0.90, 0.56], [0.92, 0.68], [0.85, 0.74], [0.76, 0.68]], color: '#2a3a18' },
+// ============================================================
+// REGION LABELS (CSS2D)
+// ============================================================
+function createRegionLabels() {
+  const labelData = [
+    { name: 'アマゾン熱帯雨林', sub: '3,920億本', lat: -3, lng: -60 },
+    { name: 'コンゴ盆地', sub: '2,800億本', lat: 0, lng: 22 },
+    { name: '東南アジア', sub: '1,800億本', lat: 5, lng: 108 },
+    { name: 'タイガ (シベリア)', sub: '7,500億本', lat: 58, lng: 100 },
+    { name: '日本列島', sub: '120億本', lat: 36, lng: 137 },
+    { name: '北欧森林', sub: '450億本', lat: 62, lng: 18 },
+    { name: '北米森林', sub: '3,180億本', lat: 48, lng: -100 },
   ];
 
-  continents.forEach(c => {
-    ctx.beginPath();
-    c.points.forEach(([px, py], i) => {
-      const x = (px * w + ox) % w;
-      const y = py * h + oy;
-      if (i === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    });
-    ctx.closePath();
+  labelData.forEach(d => {
+    const div = document.createElement('div');
+    div.className = 'globe-label';
+    div.innerHTML = `
+      <div class="globe-label-dot"></div>
+      <div class="globe-label-text">
+        <strong>${d.name}</strong>
+        <span>${d.sub}</span>
+      </div>
+    `;
 
-    // Fill with gradient
-    const grad = ctx.createLinearGradient(0, 0, w, h);
-    grad.addColorStop(0, c.color);
-    grad.addColorStop(1, lightenColor(c.color, 15));
-    ctx.fillStyle = grad;
-    ctx.fill();
-
-    // Subtle border
-    ctx.strokeStyle = 'rgba(76, 175, 80, 0.2)';
-    ctx.lineWidth = 1;
-    ctx.stroke();
+    const labelObj = new CSS2DObject(div);
+    const pos = latLngToVec3(d.lat, d.lng, EARTH_RADIUS + 0.02);
+    labelObj.position.copy(pos);
+    labelObj.userData = { baseDist: 2.5 };
+    earthGroup.add(labelObj);
+    labels.push(labelObj);
   });
 }
 
-function drawForestHeatmap(ctx, w, h) {
-  // Forest density clusters
-  const clusters = [
-    { x: 0.25, y: 0.55, r: 0.08, intensity: 0.7 }, // Amazon
-    { x: 0.52, y: 0.42, r: 0.06, intensity: 0.5 }, // Congo
-    { x: 0.72, y: 0.35, r: 0.07, intensity: 0.6 }, // SE Asia
-    { x: 0.60, y: 0.16, r: 0.08, intensity: 0.5 }, // Russia/Taiga
-    { x: 0.82, y: 0.28, r: 0.03, intensity: 0.6 }, // Japan
-    { x: 0.30, y: 0.25, r: 0.04, intensity: 0.4 }, // North America
-    { x: 0.48, y: 0.20, r: 0.04, intensity: 0.4 }, // Europe
-  ];
-
-  clusters.forEach(c => {
-    const grad = ctx.createRadialGradient(
-      c.x * w, c.y * h, 0,
-      c.x * w, c.y * h, c.r * w
-    );
-    grad.addColorStop(0, `rgba(76, 175, 80, ${c.intensity * 0.5})`);
-    grad.addColorStop(0.5, `rgba(56, 142, 60, ${c.intensity * 0.25})`);
-    grad.addColorStop(1, 'rgba(56, 142, 60, 0)');
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, w, h);
-  });
+// ============================================================
+// HELPERS
+// ============================================================
+function latLngToVec3(lat, lng, radius) {
+  const phi = (90 - lat) * Math.PI / 180;
+  const theta = (lng + 180) * Math.PI / 180;
+  return new THREE.Vector3(
+    -radius * Math.sin(phi) * Math.cos(theta),
+    radius * Math.cos(phi),
+    radius * Math.sin(phi) * Math.sin(theta)
+  );
 }
 
-function drawGridLines(ctx, w, h) {
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.04)';
-  ctx.lineWidth = 0.5;
+function flyTo(lat, lng, distance = 1.8) {
+  const target = latLngToVec3(lat, lng, distance);
+  const start = camera.position.clone();
+  const startTime = clock.getElapsedTime();
+  const duration = 1.5;
 
-  // Latitude lines
-  for (let i = 1; i < 8; i++) {
-    ctx.beginPath();
-    ctx.moveTo(0, (i / 8) * h);
-    ctx.lineTo(w, (i / 8) * h);
-    ctx.stroke();
+  controls.autoRotate = false;
+
+  function flyStep() {
+    const elapsed = clock.getElapsedTime() - startTime;
+    const t = Math.min(elapsed / duration, 1);
+    const ease = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+
+    camera.position.lerpVectors(start, target, ease);
+    controls.target.set(0, 0, 0);
+    controls.update();
+
+    if (t < 1) requestAnimationFrame(flyStep);
+    else {
+      setTimeout(() => { controls.autoRotate = true; }, 3000);
+    }
   }
-  // Longitude lines
-  for (let i = 1; i < 12; i++) {
-    ctx.beginPath();
-    ctx.moveTo((i / 12) * w, 0);
-    ctx.lineTo((i / 12) * w, h);
-    ctx.stroke();
-  }
+  flyStep();
 }
 
-function drawDataPoints(ctx, w, h) {
-  // Animated forest data points
-  const time = Date.now() * 0.001;
-  const points = [
-    { x: 0.25, y: 0.55, label: 'アマゾン', size: 14 },
-    { x: 0.52, y: 0.42, label: 'コンゴ盆地', size: 11 },
-    { x: 0.72, y: 0.35, label: '東南アジア', size: 10 },
-    { x: 0.60, y: 0.16, label: 'タイガ', size: 13 },
-    { x: 0.82, y: 0.28, label: '日本', size: 7 },
-    { x: 0.30, y: 0.25, label: '北米東部', size: 9 },
-    { x: 0.48, y: 0.22, label: '北欧', size: 8 },
-  ];
+// ============================================================
+// ANIMATION LOOP
+// ============================================================
+function animate() {
+  requestAnimationFrame(animate);
+  const delta = clock.getDelta();
 
-  points.forEach((p, i) => {
-    const px = p.x * w;
-    const py = p.y * h;
-    const pulse = Math.sin(time + i * 0.8) * 0.3 + 0.7;
+  // Rotate clouds slowly
+  if (clouds) clouds.rotation.y += delta * 0.02;
 
-    // Glow
-    const glow = ctx.createRadialGradient(px, py, 0, px, py, p.size + 8);
-    glow.addColorStop(0, `rgba(76, 175, 80, ${0.4 * pulse})`);
-    glow.addColorStop(1, 'rgba(76, 175, 80, 0)');
-    ctx.fillStyle = glow;
-    ctx.fillRect(px - 25, py - 25, 50, 50);
+  // Twinkle stars
+  if (stars) stars.rotation.y += delta * 0.005;
 
-    // Dot
-    ctx.beginPath();
-    ctx.arc(px, py, 3 + pulse, 0, Math.PI * 2);
-    ctx.fillStyle = `rgba(129, 199, 132, ${0.8 + pulse * 0.2})`;
-    ctx.fill();
+  // Update detail levels based on camera distance
+  const dist = camera.position.length();
+  updateTreeVisibility(dist);
+  updateLabelVisibility(dist);
 
-    // Label
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
-    ctx.font = '11px "Noto Sans JP", sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText(p.label, px, py - 12);
+  controls.update();
+  renderer.render(scene, camera);
+  labelRenderer.render(scene, camera);
+}
+
+// ============================================================
+// LOD — TREE VISIBILITY
+// ============================================================
+function updateTreeVisibility(dist) {
+  if (!treeCrowns || !treeTrunks) return;
+  // Trees become visible as you zoom in
+  const nearThreshold = 2.2;
+  const farThreshold = 3.2;
+  let opacity = 0;
+  if (dist < nearThreshold) opacity = 1;
+  else if (dist < farThreshold) opacity = 1 - (dist - nearThreshold) / (farThreshold - nearThreshold);
+
+  treeCrowns.material.opacity = opacity;
+  treeTrunks.material.opacity = opacity * 0.8;
+}
+
+function updateLabelVisibility(dist) {
+  labels.forEach(label => {
+    const el = label.element;
+    if (dist < 4.5) {
+      el.style.opacity = Math.min(1, (4.5 - dist) / 1.5);
+      el.style.display = '';
+    } else {
+      el.style.display = 'none';
+    }
   });
 }
 
-function drawClouds(ctx, w, h) {
-  const time = Date.now() * 0.0001;
-  for (let i = 0; i < 5; i++) {
-    const cx = ((i * 0.22 + time * 0.3) % 1.2 - 0.1) * w;
-    const cy = (0.2 + i * 0.15) * h;
-    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, w * 0.12);
-    grad.addColorStop(0, 'rgba(255, 255, 255, 0.02)');
-    grad.addColorStop(1, 'rgba(255, 255, 255, 0)');
+// ============================================================
+// SATELLITE PREVIEW / APPLY ON 3D GLOBE
+// ============================================================
+function drawSatelliteOn3DGlobe(satData, opacity) {
+  const cvs = overlayMesh.userData.canvas;
+  const ctx = cvs.getContext('2d');
+  const w = cvs.width, h = cvs.height;
+  const [r, g, b] = satData.color;
+
+  ctx.clearRect(0, 0, w, h);
+
+  // Draw semi-transparent satellite data visualization
+  for (let i = 0; i < 60; i++) {
+    const cx = Math.random() * w;
+    const cy = Math.random() * h;
+    const cr = Math.random() * 200 + 50;
+    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, cr);
+    grad.addColorStop(0, `rgba(${r},${g},${b},${Math.random() * 0.4 + 0.1})`);
+    grad.addColorStop(1, `rgba(${r},${g},${b},0)`);
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, w, h);
   }
+
+  overlayMesh.userData.texture.needsUpdate = true;
+  overlayMesh.material.opacity = opacity / 100;
 }
 
-function lightenColor(hex, amount) {
-  const num = parseInt(hex.replace('#', ''), 16);
-  const r = Math.min(255, (num >> 16) + amount);
-  const g = Math.min(255, ((num >> 8) & 0x00FF) + amount);
-  const b = Math.min(255, (num & 0x0000FF) + amount);
-  return `rgb(${r},${g},${b})`;
+function clearSatelliteOverlay() {
+  const cvs = overlayMesh.userData.canvas;
+  const ctx = cvs.getContext('2d');
+  ctx.clearRect(0, 0, cvs.width, cvs.height);
+  overlayMesh.userData.texture.needsUpdate = true;
+  overlayMesh.material.opacity = 0;
 }
 
-// ============================================================
-// MAP ANIMATION LOOP
-// ============================================================
-function animateForestDots() {
-  const canvas = $('#map-canvas');
-  const ctx = canvas.getContext('2d');
-  function loop() {
-    drawMap(ctx, canvas);
-    requestAnimationFrame(loop);
-  }
-  requestAnimationFrame(loop);
+function selectSatelliteForPreview(satId) {
+  const satData = SATELLITE_DATA.find(s => s.id === satId);
+  if (!satData) return;
+  state.currentPreview = satData;
+
+  $('#preview-name').textContent = satData.name;
+  $('#preview-desc').textContent = satData.description;
+  $('#preview-bar').classList.remove('hidden');
+  $('#preview-opacity').value = 60;
+  $('#opacity-value').textContent = '60%';
+
+  drawSatelliteOn3DGlobe(satData, 60);
+
+  $$('.satellite-card').forEach(c => c.classList.remove('selected'));
+  const card = document.querySelector(`.satellite-card[data-id="${satId}"]`);
+  if (card) card.classList.add('selected');
+
+  $('#layer-modal').classList.add('hidden');
+  showToast('info', `${satData.name} のプレビューを表示中`);
 }
 
-// ============================================================
-// MINI EARTH
-// ============================================================
-function initMiniEarth() {
-  const canvas = $('#mini-earth-canvas');
-  canvas.width = 128;
-  canvas.height = 128;
-  const ctx = canvas.getContext('2d');
-  drawMiniEarth(ctx, canvas);
+function applyCurrentPreview() {
+  if (!state.currentPreview) return;
+  const layer = { ...state.currentPreview, opacity: parseInt($('#preview-opacity').value) };
+  state.activeLayers.push(layer);
+  renderActiveLayers();
+  drawSatelliteOn3DGlobe(layer, layer.opacity);
+
+  state.currentPreview = null;
+  $('#preview-bar').classList.add('hidden');
+  showToast('success', `${layer.name} をマップに適用しました`);
 }
 
-function drawMiniEarth(ctx, canvas) {
-  const w = canvas.width;
-  const h = canvas.height;
-  const cx = w / 2;
-  const cy = h / 2;
-  const r = Math.min(w, h) / 2 - 2;
-
-  // Earth circle
-  const earthGrad = ctx.createRadialGradient(cx - r * 0.3, cy - r * 0.3, 0, cx, cy, r);
-  earthGrad.addColorStop(0, '#1a6b3c');
-  earthGrad.addColorStop(0.3, '#14523b');
-  earthGrad.addColorStop(0.6, '#0d3b5e');
-  earthGrad.addColorStop(1, '#091e3a');
-  ctx.beginPath();
-  ctx.arc(cx, cy, r, 0, Math.PI * 2);
-  ctx.fillStyle = earthGrad;
-  ctx.fill();
-
-  // Simple land masses
-  ctx.fillStyle = 'rgba(34, 139, 34, 0.5)';
-  // Asia-ish
-  ctx.beginPath();
-  ctx.ellipse(cx + 8, cy - 8, 18, 14, 0.3, 0, Math.PI * 2);
-  ctx.fill();
-  // Africa-ish
-  ctx.beginPath();
-  ctx.ellipse(cx - 8, cy + 8, 8, 14, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  // Atmosphere glow
-  const atmoGrad = ctx.createRadialGradient(cx, cy, r * 0.8, cx, cy, r);
-  atmoGrad.addColorStop(0, 'rgba(100, 200, 255, 0)');
-  atmoGrad.addColorStop(1, 'rgba(100, 200, 255, 0.2)');
-  ctx.beginPath();
-  ctx.arc(cx, cy, r, 0, Math.PI * 2);
-  ctx.fillStyle = atmoGrad;
-  ctx.fill();
+function cancelPreview() {
+  state.currentPreview = null;
+  $('#preview-bar').classList.add('hidden');
+  if (state.activeLayers.length === 0) clearSatelliteOverlay();
 }
 
 // ============================================================
-// RENDER — Region List
+// RENDER — PANELS (Regions, Species, Satellite Catalog)
 // ============================================================
 function renderRegions() {
   const container = $('#region-list');
   container.innerHTML = REGIONS_DATA.map(r => `
-    <div class="region-item" data-region="${r.name}">
+    <div class="region-item" data-region="${r.name}" data-lat="${r.lat}" data-lng="${r.lng}">
       <span class="region-flag">${r.flag}</span>
       <div class="region-info">
         <div class="region-name">${r.name}</div>
         <div class="region-stats">${r.trees} 本 · ${r.area}</div>
       </div>
       <div class="region-bar">
-        <div class="region-bar-fill" style="width: 0%;" data-target="${r.pct}"></div>
+        <div class="region-bar-fill" style="width:0%;" data-target="${r.pct}"></div>
       </div>
     </div>
   `).join('');
-
-  // Animate bars
   requestAnimationFrame(() => {
     setTimeout(() => {
-      $$('.region-bar-fill').forEach(bar => {
-        bar.style.width = bar.dataset.target + '%';
-      });
+      $$('.region-bar-fill').forEach(bar => { bar.style.width = bar.dataset.target + '%'; });
     }, 100);
   });
 }
 
-// ============================================================
-// RENDER — Species List
-// ============================================================
 function renderSpecies() {
   const container = $('#species-list');
   container.innerHTML = SPECIES_DATA.map(s => `
     <div class="species-item">
-      <div class="species-icon" style="background: ${s.color}22;">
-        <span>${s.emoji}</span>
-      </div>
+      <div class="species-icon" style="background:${s.color}22;"><span>${s.emoji}</span></div>
       <div class="species-info">
         <div class="species-name">${s.name}</div>
         <div class="species-count">${s.count}</div>
@@ -554,19 +687,12 @@ function renderSpecies() {
   `).join('');
 }
 
-// ============================================================
-// RENDER — Satellite Catalog
-// ============================================================
 function renderSatelliteCatalog(filter = 'all') {
   const container = $('#satellite-catalog');
-  const filtered = filter === 'all'
-    ? SATELLITE_DATA
-    : SATELLITE_DATA.filter(s => s.category === filter);
-
+  const filtered = filter === 'all' ? SATELLITE_DATA : SATELLITE_DATA.filter(s => s.category === filter);
   container.innerHTML = filtered.map(s => `
     <div class="satellite-card" data-id="${s.id}">
-      <div class="satellite-thumb">
-        <canvas data-sat-id="${s.id}"></canvas>
+      <div class="satellite-thumb"><canvas data-sat-id="${s.id}"></canvas>
         <span class="satellite-badge${s.free ? ' free' : ''}">${s.free ? '無料' : '有料'}</span>
       </div>
       <div class="satellite-card-body">
@@ -574,239 +700,99 @@ function renderSatelliteCatalog(filter = 'all') {
         <div class="satellite-card-desc">${s.description}</div>
         <div class="satellite-card-meta">
           <a class="satellite-source-link" href="${s.sourceUrl}" target="_blank" rel="noopener" onclick="event.stopPropagation()">
-            <span class="material-icons">open_in_new</span>
-            ${s.source}
-          </a>
+            <span class="material-icons">open_in_new</span>${s.source}</a>
           <span class="satellite-resolution">${s.resolution}</span>
         </div>
       </div>
     </div>
   `).join('');
-
-  // Draw thumbnail canvases
   filtered.forEach(s => {
-    const thumbCanvas = document.querySelector(`canvas[data-sat-id="${s.id}"]`);
-    if (thumbCanvas) drawSatelliteThumb(thumbCanvas, s);
+    const c = document.querySelector(`canvas[data-sat-id="${s.id}"]`);
+    if (c) drawSatelliteThumb(c, s);
   });
-
-  // Bind click
   $$('.satellite-card').forEach(card => {
-    card.addEventListener('click', () => {
-      selectSatelliteForPreview(card.dataset.id);
-    });
+    card.addEventListener('click', () => selectSatelliteForPreview(card.dataset.id));
   });
 }
 
 function drawSatelliteThumb(canvas, data) {
-  canvas.width = 520;
-  canvas.height = 260;
+  canvas.width = 520; canvas.height = 260;
   const ctx = canvas.getContext('2d');
-  const w = canvas.width;
-  const h = canvas.height;
   const [r, g, b] = data.color;
-
-  // Background gradient
-  const grad = ctx.createLinearGradient(0, 0, w, h);
-  grad.addColorStop(0, `rgba(${r}, ${g}, ${b}, 0.7)`);
-  grad.addColorStop(0.5, `rgba(${r * 0.5}, ${g * 0.5}, ${b * 0.5}, 0.9)`);
-  grad.addColorStop(1, `rgba(${r * 0.3}, ${g * 0.3}, ${b * 0.3}, 1)`);
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, w, h);
-
-  // Noise-like texture
+  const grad = ctx.createLinearGradient(0, 0, 520, 260);
+  grad.addColorStop(0, `rgba(${r},${g},${b},0.7)`);
+  grad.addColorStop(0.5, `rgba(${r * 0.5},${g * 0.5},${b * 0.5},0.9)`);
+  grad.addColorStop(1, `rgba(${r * 0.3},${g * 0.3},${b * 0.3},1)`);
+  ctx.fillStyle = grad; ctx.fillRect(0, 0, 520, 260);
   for (let i = 0; i < 200; i++) {
-    const nx = Math.random() * w;
-    const ny = Math.random() * h;
-    const nr = Math.random() * 3 + 1;
     ctx.beginPath();
-    ctx.arc(nx, ny, nr, 0, Math.PI * 2);
-    ctx.fillStyle = `rgba(${r + 40}, ${g + 40}, ${b + 40}, ${Math.random() * 0.3})`;
-    ctx.fill();
-  }
-
-  // Terrain-like shapes
-  for (let i = 0; i < 5; i++) {
-    ctx.beginPath();
-    const sx = Math.random() * w;
-    const sy = Math.random() * h;
-    ctx.ellipse(sx, sy, Math.random() * 80 + 20, Math.random() * 40 + 10, Math.random() * Math.PI, 0, Math.PI * 2);
-    ctx.fillStyle = `rgba(${r + 20}, ${g + 20}, ${b + 20}, ${Math.random() * 0.2 + 0.1})`;
+    ctx.arc(Math.random() * 520, Math.random() * 260, Math.random() * 3 + 1, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(${r + 40},${g + 40},${b + 40},${Math.random() * 0.3})`;
     ctx.fill();
   }
 }
 
 // ============================================================
-// SATELLITE PREVIEW FLOW
+// ACTIVE LAYERS
 // ============================================================
-function selectSatelliteForPreview(satId) {
-  const satData = SATELLITE_DATA.find(s => s.id === satId);
-  if (!satData) return;
-
-  state.currentPreview = satData;
-
-  // Update preview bar
-  $('#preview-name').textContent = satData.name;
-  $('#preview-desc').textContent = satData.description;
-  $('#preview-bar').classList.remove('hidden');
-
-  // Show overlay on map canvas
-  const overlayCanvas = $('#satellite-overlay-canvas');
-  overlayCanvas.width = window.innerWidth;
-  overlayCanvas.height = window.innerHeight;
-  drawSatelliteOverlay(overlayCanvas, satData);
-  overlayCanvas.classList.add('visible');
-
-  // Highlight card in modal
-  $$('.satellite-card').forEach(c => c.classList.remove('selected'));
-  const card = document.querySelector(`.satellite-card[data-id="${satId}"]`);
-  if (card) card.classList.add('selected');
-
-  // Close modal
-  $('#layer-modal').classList.add('hidden');
-
-  showToast('info', `${satData.name} のプレビューを表示中`);
-}
-
-function drawSatelliteOverlay(canvas, satData) {
-  const ctx = canvas.getContext('2d');
-  const w = canvas.width;
-  const h = canvas.height;
-  const [r, g, b] = satData.color;
-
-  ctx.clearRect(0, 0, w, h);
-
-  // Semi-transparent overlay simulating satellite data
-  for (let i = 0; i < 30; i++) {
-    const cx = Math.random() * w;
-    const cy = Math.random() * h;
-    const cr = Math.random() * 120 + 40;
-    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, cr);
-    grad.addColorStop(0, `rgba(${r}, ${g}, ${b}, ${Math.random() * 0.3 + 0.1})`);
-    grad.addColorStop(1, `rgba(${r}, ${g}, ${b}, 0)`);
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, w, h);
-  }
-}
-
-// ============================================================
-// LAYER APPLICATION
-// ============================================================
-function applyCurrentPreview() {
-  if (!state.currentPreview) return;
-
-  const layer = { ...state.currentPreview, opacity: parseInt($('#preview-opacity').value) };
-  state.activeLayers.push(layer);
-  renderActiveLayers();
-
-  // Keep overlay visible
-  const overlayCanvas = $('#satellite-overlay-canvas');
-  overlayCanvas.style.opacity = layer.opacity / 100;
-
-  // Reset preview
-  state.currentPreview = null;
-  $('#preview-bar').classList.add('hidden');
-
-  showToast('success', `${layer.name} をマップに適用しました`);
-}
-
-function cancelPreview() {
-  state.currentPreview = null;
-  $('#preview-bar').classList.add('hidden');
-  const overlayCanvas = $('#satellite-overlay-canvas');
-  overlayCanvas.classList.remove('visible');
-}
-
 function renderActiveLayers() {
   const container = $('#active-layers');
-
   if (state.activeLayers.length === 0) {
-    container.innerHTML = `
-      <div class="empty-state">
-        <span class="material-icons">layer_clear</span>
-        <p>適用中のレイヤーはありません</p>
-      </div>
-    `;
+    container.innerHTML = `<div class="empty-state"><span class="material-icons">layer_clear</span><p>適用中のレイヤーはありません</p></div>`;
     return;
   }
-
   container.innerHTML = state.activeLayers.map((l, i) => `
     <div class="active-layer-item" data-index="${i}">
-      <div class="active-layer-thumb">
-        <canvas data-active-thumb="${i}"></canvas>
-      </div>
+      <div class="active-layer-thumb"><canvas data-active-thumb="${i}"></canvas></div>
       <div class="active-layer-info">
         <div class="active-layer-name">${l.name}</div>
         <a class="active-layer-source" href="${l.sourceUrl}" target="_blank" rel="noopener">${l.source}</a>
-        <div class="layer-opacity-slider">
-          <input type="range" min="0" max="100" value="${l.opacity}" data-layer-idx="${i}">
-        </div>
+        <div class="layer-opacity-slider"><input type="range" min="0" max="100" value="${l.opacity}" data-layer-idx="${i}"></div>
       </div>
       <div class="active-layer-actions">
-        <button class="toggle-visibility-btn" data-index="${i}" title="表示切替">
-          <span class="material-icons">visibility</span>
-        </button>
-        <button class="remove-layer-btn" data-index="${i}" title="削除">
-          <span class="material-icons">delete_outline</span>
-        </button>
+        <button class="toggle-visibility-btn" data-index="${i}" title="表示切替"><span class="material-icons">visibility</span></button>
+        <button class="remove-layer-btn" data-index="${i}" title="削除"><span class="material-icons">delete_outline</span></button>
       </div>
     </div>
   `).join('');
-
-  // Draw small thumbnails
   state.activeLayers.forEach((l, i) => {
-    const canvas = document.querySelector(`canvas[data-active-thumb="${i}"]`);
-    if (canvas) {
-      canvas.width = 72;
-      canvas.height = 72;
-      const ctx = canvas.getContext('2d');
+    const c = document.querySelector(`canvas[data-active-thumb="${i}"]`);
+    if (c) {
+      c.width = 72; c.height = 72; const ctx = c.getContext('2d');
       const [r, g, b] = l.color;
       const grad = ctx.createRadialGradient(36, 36, 0, 36, 36, 36);
-      grad.addColorStop(0, `rgba(${r}, ${g}, ${b}, 0.8)`);
-      grad.addColorStop(1, `rgba(${r * 0.5}, ${g * 0.5}, ${b * 0.5}, 1)`);
-      ctx.fillStyle = grad;
-      ctx.fillRect(0, 0, 72, 72);
+      grad.addColorStop(0, `rgba(${r},${g},${b},0.8)`);
+      grad.addColorStop(1, `rgba(${r * 0.5},${g * 0.5},${b * 0.5},1)`);
+      ctx.fillStyle = grad; ctx.fillRect(0, 0, 72, 72);
     }
   });
-
-  // Bind opacity sliders
-  $$('.layer-opacity-slider input').forEach(slider => {
-    slider.addEventListener('input', (e) => {
+  $$('.layer-opacity-slider input').forEach(s => {
+    s.addEventListener('input', e => {
       const idx = parseInt(e.target.dataset.layerIdx);
       state.activeLayers[idx].opacity = parseInt(e.target.value);
-      const overlayCanvas = $('#satellite-overlay-canvas');
-      overlayCanvas.style.opacity = e.target.value / 100;
+      overlayMesh.material.opacity = e.target.value / 100;
     });
   });
-
-  // Bind remove
   $$('.remove-layer-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const idx = parseInt(btn.dataset.index);
       const name = state.activeLayers[idx].name;
       state.activeLayers.splice(idx, 1);
       renderActiveLayers();
-      if (state.activeLayers.length === 0) {
-        const overlayCanvas = $('#satellite-overlay-canvas');
-        overlayCanvas.classList.remove('visible');
-        overlayCanvas.style.opacity = 0;
-      }
+      if (state.activeLayers.length === 0) clearSatelliteOverlay();
       showToast('info', `${name} を削除しました`);
     });
   });
-
-  // Bind visibility toggle
   $$('.toggle-visibility-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const icon = btn.querySelector('.material-icons');
       if (icon.textContent === 'visibility') {
         icon.textContent = 'visibility_off';
-        const overlayCanvas = $('#satellite-overlay-canvas');
-        overlayCanvas.style.opacity = 0;
+        overlayMesh.material.opacity = 0;
       } else {
         icon.textContent = 'visibility';
         const idx = parseInt(btn.dataset.index);
-        const overlayCanvas = $('#satellite-overlay-canvas');
-        overlayCanvas.style.opacity = state.activeLayers[idx].opacity / 100;
+        overlayMesh.material.opacity = state.activeLayers[idx].opacity / 100;
       }
     });
   });
@@ -817,35 +803,21 @@ function renderActiveLayers() {
 // ============================================================
 function handleFileUpload(files) {
   if (!files || files.length === 0) return;
-
   const fileArr = Array.from(files);
   const progressEl = $('#upload-progress');
   const progressFill = progressEl.querySelector('.progress-fill');
   const progressText = progressEl.querySelector('.progress-text');
   progressEl.classList.remove('hidden');
-
   let progress = 0;
   const step = 100 / fileArr.length;
-
   fileArr.forEach((file, i) => {
     setTimeout(() => {
       progress += step;
       progressFill.style.width = Math.min(progress, 100) + '%';
       progressText.textContent = `処理中... ${file.name} (${i + 1}/${fileArr.length})`;
-
-      state.uploadedFiles.push({
-        name: file.name,
-        size: formatFileSize(file.size),
-        type: file.name.split('.').pop().toUpperCase(),
-      });
-
+      state.uploadedFiles.push({ name: file.name, size: formatFileSize(file.size), type: file.name.split('.').pop().toUpperCase() });
       if (i === fileArr.length - 1) {
-        setTimeout(() => {
-          progressEl.classList.add('hidden');
-          progressFill.style.width = '0%';
-          renderUploadedFiles();
-          showToast('success', `${fileArr.length} 件のファイルを取り込みました`);
-        }, 500);
+        setTimeout(() => { progressEl.classList.add('hidden'); progressFill.style.width = '0%'; renderUploadedFiles(); showToast('success', `${fileArr.length} 件のファイルを取り込みました`); }, 500);
       }
     }, (i + 1) * 800);
   });
@@ -856,22 +828,12 @@ function renderUploadedFiles() {
   container.innerHTML = state.uploadedFiles.map((f, i) => `
     <div class="uploaded-file-item" data-index="${i}">
       <span class="material-icons">description</span>
-      <div class="uploaded-file-info">
-        <div class="uploaded-file-name">${f.name}</div>
-        <div class="uploaded-file-meta">${f.type} · ${f.size}</div>
-      </div>
-      <button class="uploaded-file-remove" data-index="${i}">
-        <span class="material-icons">close</span>
-      </button>
+      <div class="uploaded-file-info"><div class="uploaded-file-name">${f.name}</div><div class="uploaded-file-meta">${f.type} · ${f.size}</div></div>
+      <button class="uploaded-file-remove" data-index="${i}"><span class="material-icons">close</span></button>
     </div>
   `).join('');
-
   $$('.uploaded-file-remove').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const idx = parseInt(btn.dataset.index);
-      state.uploadedFiles.splice(idx, 1);
-      renderUploadedFiles();
-    });
+    btn.addEventListener('click', () => { state.uploadedFiles.splice(parseInt(btn.dataset.index), 1); renderUploadedFiles(); });
   });
 }
 
@@ -895,142 +857,100 @@ function showToast(type, message) {
 }
 
 // ============================================================
-// 3D MODE
-// ============================================================
-function toggle3D() {
-  state.is3D = !state.is3D;
-  const btn = $('#toggle-3d-btn');
-  btn.classList.toggle('active', state.is3D);
-
-  // Show/hide 3D indicator
-  let indicator = $('.mode-3d-indicator');
-  if (!indicator) {
-    indicator = document.createElement('div');
-    indicator.className = 'mode-3d-indicator';
-    indicator.innerHTML = '<span class="material-icons">3d_rotation</span> 3D ビュー';
-    document.body.appendChild(indicator);
-  }
-  indicator.classList.toggle('visible', state.is3D);
-
-  showToast('info', state.is3D ? '3D表示に切り替えました' : '2D表示に切り替えました');
-}
-
-// ============================================================
 // EVENT BINDINGS
 // ============================================================
 function bindEvents() {
-  // Search bar
-  $('#search-input').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      const q = e.target.value.trim();
-      if (q) showToast('info', `"${q}" を検索中...`);
-    }
+  // Search
+  $('#search-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') { const q = e.target.value.trim(); if (q) showToast('info', `"${q}" を検索中...`); }
   });
 
-  // Menu button — toggle forest panel
-  $('#menu-btn').addEventListener('click', () => {
-    $('#forest-panel').classList.toggle('hidden');
-  });
+  // Menu → forest panel
+  $('#menu-btn').addEventListener('click', () => { $('#forest-panel').classList.toggle('hidden'); });
 
-  // Panel close buttons
+  // Panel close
   $$('.panel-close-btn').forEach(btn => {
     btn.addEventListener('click', () => {
-      const panelId = btn.dataset.panel;
-      $(`#${panelId}`).classList.add('hidden');
-      // Remove active state from toolbar buttons
-      if (panelId === 'satellite-panel') {
-        $('#satellite-panel-toggle').classList.remove('active');
-      }
+      $(`#${btn.dataset.panel}`).classList.add('hidden');
+      if (btn.dataset.panel === 'satellite-panel') $('#satellite-panel-toggle').classList.remove('active');
     });
   });
 
   // Satellite panel toggle
   $('#satellite-panel-toggle').addEventListener('click', () => {
-    const panel = $('#satellite-panel');
-    const btn = $('#satellite-panel-toggle');
+    const panel = $('#satellite-panel'), btn = $('#satellite-panel-toggle');
     const isHidden = panel.classList.contains('hidden');
     panel.classList.toggle('hidden');
     btn.classList.toggle('active', isHidden);
-
-    // Close upload panel if open
-    if (isHidden) {
-      const uploadPanel = $('#upload-panel');
-      if (uploadPanel) uploadPanel.classList.add('hidden');
-      $('#upload-toggle-btn').classList.remove('active');
-    }
   });
 
   // Upload toggle
   $('#upload-toggle-btn').addEventListener('click', () => {
     const panel = $('#satellite-panel');
-    const btn = $('#upload-toggle-btn');
-    const isHidden = panel.classList.contains('hidden');
-    // Open satellite panel with focus on upload
-    if (isHidden) {
-      panel.classList.remove('hidden');
-    }
-    btn.classList.toggle('active');
-    // Scroll to upload area
+    if (panel.classList.contains('hidden')) panel.classList.remove('hidden');
+    $('#upload-toggle-btn').classList.toggle('active');
     const dropzone = $('#upload-dropzone');
-    if (dropzone) {
-      dropzone.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      dropzone.classList.add('dragover');
-      setTimeout(() => dropzone.classList.remove('dragover'), 800);
-    }
+    if (dropzone) { dropzone.scrollIntoView({ behavior: 'smooth', block: 'center' }); dropzone.classList.add('dragover'); setTimeout(() => dropzone.classList.remove('dragover'), 800); }
   });
 
-  // Layer toggle button
+  // Layer toggle
   $('#layers-toggle-btn').addEventListener('click', () => {
     const panel = $('#satellite-panel');
     const isHidden = panel.classList.contains('hidden');
     panel.classList.toggle('hidden');
-    if (isHidden) {
-      $('#satellite-panel-toggle').classList.add('active');
-    }
+    if (isHidden) $('#satellite-panel-toggle').classList.add('active');
   });
 
-  // 3D toggle
-  $('#toggle-3d-btn').addEventListener('click', toggle3D);
+  // 3D toggle (reset rotation)
+  $('#toggle-3d-btn').addEventListener('click', () => {
+    state.is3D = !state.is3D;
+    $('#toggle-3d-btn').classList.toggle('active', state.is3D);
+    if (state.is3D) {
+      camera.position.set(0, 0.8, 2.8);
+      controls.autoRotate = true;
+      showToast('info', '3D地球儀ビューに切り替えました');
+    } else {
+      // Top-down 2D-like view
+      camera.position.set(0, 3, 0.01);
+      controls.autoRotate = false;
+      showToast('info', '2D平面ビューに切り替えました');
+    }
+  });
 
   // Zoom buttons
   $('#zoom-in-btn').addEventListener('click', () => {
-    state.mapZoom = Math.min(20, state.mapZoom + 1);
+    const dir = camera.position.clone().normalize();
+    camera.position.addScaledVector(dir, -0.3);
+    const d = camera.position.length();
+    if (d < controls.minDistance) camera.position.setLength(controls.minDistance);
   });
   $('#zoom-out-btn').addEventListener('click', () => {
-    state.mapZoom = Math.max(1, state.mapZoom - 1);
+    const dir = camera.position.clone().normalize();
+    camera.position.addScaledVector(dir, 0.3);
+    const d = camera.position.length();
+    if (d > controls.maxDistance) camera.position.setLength(controls.maxDistance);
   });
 
-  // Compass
+  // Compass → reset
   $('#compass-btn').addEventListener('click', () => {
-    state.mapRotation = 0;
-    state.mapTilt = 0;
+    camera.position.set(0, 0.8, 2.8);
+    controls.target.set(0, 0, 0);
+    controls.autoRotate = true;
     showToast('info', '方位をリセットしました');
   });
 
-  // My location
+  // My location → Japan
   $('#my-location-btn').addEventListener('click', () => {
-    state.mapCenter = { lat: 35, lng: 137 };
-    showToast('info', '現在地に移動しました');
+    flyTo(36, 137, 1.6);
+    showToast('info', '日本に移動しました');
   });
 
-  // Add Layer button → Open modal
-  $('#add-layer-btn').addEventListener('click', () => {
-    $('#layer-modal').classList.remove('hidden');
-  });
+  // Add Layer → modal
+  $('#add-layer-btn').addEventListener('click', () => { $('#layer-modal').classList.remove('hidden'); });
+  $('#modal-close-btn').addEventListener('click', () => { $('#layer-modal').classList.add('hidden'); });
+  $('#layer-modal').addEventListener('click', e => { if (e.target === e.currentTarget) $('#layer-modal').classList.add('hidden'); });
 
-  // Modal close
-  $('#modal-close-btn').addEventListener('click', () => {
-    $('#layer-modal').classList.add('hidden');
-  });
-
-  // Modal overlay click to close
-  $('#layer-modal').addEventListener('click', (e) => {
-    if (e.target === e.currentTarget) {
-      $('#layer-modal').classList.add('hidden');
-    }
-  });
-
-  // Modal tab filters
+  // Modal tabs
   $$('.tab-btn').forEach(tab => {
     tab.addEventListener('click', () => {
       $$('.tab-btn').forEach(t => t.classList.remove('active'));
@@ -1039,68 +959,55 @@ function bindEvents() {
     });
   });
 
-  // Preview bar controls
+  // Preview controls
   $('#apply-layer-btn').addEventListener('click', applyCurrentPreview);
   $('#cancel-preview-btn').addEventListener('click', cancelPreview);
-
-  // Opacity slider
-  $('#preview-opacity').addEventListener('input', (e) => {
+  $('#preview-opacity').addEventListener('input', e => {
     const val = e.target.value;
     $('#opacity-value').textContent = val + '%';
-    const overlayCanvas = $('#satellite-overlay-canvas');
-    overlayCanvas.style.opacity = val / 100;
+    if (state.currentPreview) drawSatelliteOn3DGlobe(state.currentPreview, parseInt(val));
   });
 
   // Upload dropzone
   const dropzone = $('#upload-dropzone');
-  dropzone.addEventListener('dragover', (e) => {
-    e.preventDefault();
-    dropzone.classList.add('dragover');
-  });
-  dropzone.addEventListener('dragleave', () => {
-    dropzone.classList.remove('dragover');
-  });
-  dropzone.addEventListener('drop', (e) => {
-    e.preventDefault();
-    dropzone.classList.remove('dragover');
-    handleFileUpload(e.dataTransfer.files);
-  });
-  dropzone.addEventListener('click', () => {
-    $('#file-input').click();
-  });
-  $('#file-input').addEventListener('change', (e) => {
-    handleFileUpload(e.target.files);
-  });
-  $('#browse-btn').addEventListener('click', (e) => {
-    e.stopPropagation();
-    $('#file-input').click();
-  });
+  dropzone.addEventListener('dragover', e => { e.preventDefault(); dropzone.classList.add('dragover'); });
+  dropzone.addEventListener('dragleave', () => { dropzone.classList.remove('dragover'); });
+  dropzone.addEventListener('drop', e => { e.preventDefault(); dropzone.classList.remove('dragover'); handleFileUpload(e.dataTransfer.files); });
+  dropzone.addEventListener('click', () => { $('#file-input').click(); });
+  $('#file-input').addEventListener('change', e => { handleFileUpload(e.target.files); });
+  $('#browse-btn').addEventListener('click', e => { e.stopPropagation(); $('#file-input').click(); });
 
-  // Mini earth click — reset view
+  // Mini earth → reset global view
   $('#mini-earth').addEventListener('click', () => {
-    state.mapZoom = 2;
-    state.mapCenter = { lat: 20, lng: 0 };
-    state.is3D = false;
-    $('#toggle-3d-btn').classList.remove('active');
-    const indicator = $('.mode-3d-indicator');
-    if (indicator) indicator.classList.remove('visible');
+    camera.position.set(0, 0.5, 4);
+    controls.autoRotate = true;
     showToast('info', 'グローバルビューに切り替えました');
   });
 
-  // Region click — fly to region
-  document.addEventListener('click', (e) => {
+  // Region click → fly to
+  document.addEventListener('click', e => {
     const regionItem = e.target.closest('.region-item');
     if (regionItem) {
-      const region = regionItem.dataset.region;
-      showToast('info', `${region} エリアにフォーカス`);
+      const lat = parseFloat(regionItem.dataset.lat);
+      const lng = parseFloat(regionItem.dataset.lng);
+      flyTo(lat, lng, 1.8);
+      showToast('info', `${regionItem.dataset.region} エリアにフォーカス`);
     }
   });
 
-  // Keyboard shortcuts
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
-      $('#layer-modal').classList.add('hidden');
-      cancelPreview();
-    }
+  // Keyboard
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') { $('#layer-modal').classList.add('hidden'); cancelPreview(); }
+  });
+
+  // Stop auto-rotate on user interaction, resume after idle
+  let idleTimer;
+  controls.addEventListener('start', () => {
+    controls.autoRotate = false;
+    clearTimeout(idleTimer);
+  });
+  controls.addEventListener('end', () => {
+    clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => { controls.autoRotate = true; }, 5000);
   });
 }

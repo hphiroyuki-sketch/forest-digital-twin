@@ -122,19 +122,61 @@ a:hover {
 }
 
 /* ============================================================
-   MAP CONTAINER
+   GLOBE CONTAINER (Three.js)
    ============================================================ */
-#map-container {
+#globe-container {
   position: fixed;
   inset: 0;
   z-index: var(--z-map);
-  background: #1a2634;
+  background: #000008;
+  overflow: hidden;
 }
 
-#map-canvas {
+#globe-container canvas {
+  display: block;
   width: 100%;
   height: 100%;
+}
+
+/* 3D Globe Labels (CSS2DRenderer) */
+.globe-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  pointer-events: none;
+  transition: opacity 0.3s;
+}
+
+.globe-label-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #4caf50;
+  box-shadow: 0 0 8px rgba(76, 175, 80, 0.8), 0 0 16px rgba(76, 175, 80, 0.4);
+  animation: pulse 2s ease-in-out infinite;
+}
+
+.globe-label-text {
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(76, 175, 80, 0.3);
+  border-radius: 6px;
+  padding: 4px 10px;
+  white-space: nowrap;
+}
+
+.globe-label-text strong {
   display: block;
+  font-size: 12px;
+  font-weight: 500;
+  color: #e8f5e9;
+  line-height: 1.3;
+}
+
+.globe-label-text span {
+  font-size: 10px;
+  color: #81c784;
 }
 
 #map-overlay {

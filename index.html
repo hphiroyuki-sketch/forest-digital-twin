@@ -1,25 +1,32 @@
 <!DOCTYPE html>
 <html lang="ja">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ForestScope — 森林デジタルツイン・ダッシュボード</title>
-  <meta name="description" content="グローバル森林データを可視化するSaaS型デジタルツイン・ダッシュボード。衛星画像オーバーレイ、3Dマップ、森林統計を統合。">
+  <meta name="description" content="グローバル森林データを可視化するSaaS型デジタルツイン・ダッシュボード。3D地球儀、衛星画像オーバーレイ、森林統計を統合。">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Roboto:wght@300;400;500;700&family=Noto+Sans+JP:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <link
+    href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Roboto:wght@300;400;500;700&family=Noto+Sans+JP:wght@300;400;500;700&display=swap"
+    rel="stylesheet">
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Outlined|Material+Icons" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.162.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.162.0/examples/jsm/"
+    }
+  }
+  </script>
 </head>
+
 <body>
 
-  <!-- ===== FULL-SCREEN MAP ===== -->
-  <div id="map-container">
-    <canvas id="map-canvas"></canvas>
-    <div id="map-overlay"></div>
-    <!-- Satellite overlay canvas -->
-    <canvas id="satellite-overlay-canvas"></canvas>
-  </div>
+  <!-- ===== 3D GLOBE CONTAINER ===== -->
+  <div id="globe-container"></div>
 
   <!-- ===== TOP SEARCH BAR (Google Maps Style) ===== -->
   <div id="search-bar">
@@ -182,7 +189,9 @@
         <button id="browse-btn" class="secondary-btn">ファイルを選択</button>
       </div>
       <div id="upload-progress" class="upload-progress hidden">
-        <div class="progress-bar"><div class="progress-fill"></div></div>
+        <div class="progress-bar">
+          <div class="progress-fill"></div>
+        </div>
         <span class="progress-text">処理中...</span>
       </div>
       <div id="uploaded-files" class="uploaded-files-list"></div>
@@ -255,6 +264,7 @@
   <!-- ===== TOAST NOTIFICATIONS ===== -->
   <div id="toast-container"></div>
 
-  <script src="app.js"></script>
+  <script type="module" src="app.js"></script>
 </body>
+
 </html>
