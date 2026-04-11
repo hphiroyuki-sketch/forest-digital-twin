@@ -254,36 +254,91 @@ function initScene() {
 // EARTH
 // ============================================================
 function createEarth() {
-  const loader = new THREE.TextureLoader();
-
-  // High-resolution sphere for crisp detail when zoomed in
+  // High-resolution sphere
   const earthGeo = new THREE.SphereGeometry(EARTH_RADIUS, 128, 128);
 
-  const loader2 = new THREE.TextureLoader();
-  loader2.crossOrigin = 'anonymous';
+  // Create canvas-based texture that will be filled with satellite tiles
+  const canvasW = 4096;
+  const canvasH = 2048;
+  const tileCanvas = document.createElement('canvas');
+  tileCanvas.width = canvasW;
+  tileCanvas.height = canvasH;
+  const tileCtx = tileCanvas.getContext('2d');
 
-  // High-res Earth texture (8K from three-globe CDN)
-  const earthTexture = loader2.load('https://unpkg.com/three-globe@2.31.1/example/img/earth-blue-marble.jpg');
+  // Dark ocean background
+  tileCtx.fillStyle = '#0a1628';
+  tileCtx.fillRect(0, 0, canvasW, canvasH);
+
+  const earthTexture = new THREE.CanvasTexture(tileCanvas);
   earthTexture.colorSpace = THREE.SRGBColorSpace;
   earthTexture.anisotropy = Math.min(renderer.capabilities.getMaxAnisotropy(), 16);
   earthTexture.minFilter = THREE.LinearMipmapLinearFilter;
   earthTexture.magFilter = THREE.LinearFilter;
-  earthTexture.generateMipmaps = true;
 
+  const loader2 = new THREE.TextureLoader();
+  loader2.crossOrigin = 'anonymous';
   const bumpTexture = loader2.load(TEXTURE_BASE + 'earth-topology.png');
   const specTexture = loader2.load(TEXTURE_BASE + 'earth-water.png');
 
   const earthMat = new THREE.MeshPhongMaterial({
     map: earthTexture,
     bumpMap: bumpTexture,
-    bumpScale: 0.012,
+    bumpScale: 0.008,
     specularMap: specTexture,
-    specular: new THREE.Color(0x333333),
-    shininess: 18,
+    specular: new THREE.Color(0x222222),
+    shininess: 20,
   });
 
   earth = new THREE.Mesh(earthGeo, earthMat);
   earthGroup.add(earth);
+
+  // Store references for progressive loading
+  earth.userData.tileCanvas = tileCanvas;
+  earth.userData.tileCtx = tileCtx;
+  earth.userData.texture = earthTexture;
+
+  // Load satellite tiles (ESRI World Imagery — Google Earth quality)
+  loadSatelliteTiles(tileCtx, earthTexture, canvasW, canvasH, 3);  // Quick pass
+  setTimeout(() => {
+    loadSatelliteTiles(tileCtx, earthTexture, canvasW, canvasH, 4); // Detail pass
+  }, 2000);
+}
+
+// Web Mercator tile coordinate → lat/lng conversion
+function tileToLatLng(tx, ty, zoom) {
+  const n = Math.pow(2, zoom);
+  const lng = (tx / n) * 360 - 180;
+  const latRad = Math.atan(Math.sinh(Math.PI * (1 - 2 * ty / n)));
+  const lat = latRad * (180 / Math.PI);
+  return { lat, lng };
+}
+
+// Load ESRI World Imagery tiles onto equirectangular canvas
+function loadSatelliteTiles(ctx, texture, canvasW, canvasH, zoom) {
+  const numTiles = Math.pow(2, zoom);
+
+  for (let tx = 0; tx < numTiles; tx++) {
+    for (let ty = 0; ty < numTiles; ty++) {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload = function () {
+        // Get geographic bounds of this tile
+        const topLeft = tileToLatLng(tx, ty, zoom);
+        const bottomRight = tileToLatLng(tx + 1, ty + 1, zoom);
+
+        // Map to equirectangular canvas coordinates
+        const x1 = ((topLeft.lng + 180) / 360) * canvasW;
+        const x2 = ((bottomRight.lng + 180) / 360) * canvasW;
+        const y1 = ((90 - topLeft.lat) / 180) * canvasH;
+        const y2 = ((90 - bottomRight.lat) / 180) * canvasH;
+
+        ctx.drawImage(img, x1, y1, x2 - x1, y2 - y1);
+        texture.needsUpdate = true;
+      };
+      // ESRI World Imagery tiles (high quality, CORS enabled)
+      img.src = `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${zoom}/${ty}/${tx}`;
+    }
+  }
 }
 
 // ============================================================
