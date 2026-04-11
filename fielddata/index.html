@@ -4,8 +4,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ForestScope — 森林デジタルツイン・ダッシュボード</title>
-  <meta name="description" content="グローバル森林データを可視化するSaaS型デジタルツイン・ダッシュボード。3D地球儀、衛星画像オーバーレイ、森林統計を統合。">
+  <title>ForestScope — 現場データモード</title>
+  <meta name="description" content="ForestScope 現場一次データ収集モード。現場写真からAI種同定し、3D地球儀上に観測データをプロット。">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link
@@ -13,6 +13,10 @@
     rel="stylesheet">
   <link href="https://fonts.googleapis.com/icon?family=Material+Icons+Outlined|Material+Icons" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
+  <!-- Field Data CDN Libraries -->
+  <script src="https://cdn.jsdelivr.net/npm/exifr@7.1.3/dist/full.umd.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/idb@8/build/umd.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
   <script type="importmap">
   {
     "imports": {
@@ -45,17 +49,17 @@
 
   <!-- ===== TOP-RIGHT TOOLBAR ===== -->
   <div id="top-right-toolbar">
-    <a href="./fielddata/" class="toolbar-btn" aria-label="現場データモード" title="📸 現場データモード" style="text-decoration:none;">
-      <span class="material-icons">photo_camera</span>
+    <a href="../" class="toolbar-btn" aria-label="通常モードに戻る" title="通常モードに戻る" style="text-decoration:none;">
+      <span class="material-icons">public</span>
     </a>
+    <button id="upload-toggle-btn" class="toolbar-btn" aria-label="現場データ">
+      <span class="material-icons">photo_camera</span>
+    </button>
     <button id="layers-toggle-btn" class="toolbar-btn" aria-label="レイヤー">
       <span class="material-icons">layers</span>
     </button>
     <button id="satellite-panel-toggle" class="toolbar-btn" aria-label="衛星データ">
       <span class="material-icons">satellite_alt</span>
-    </button>
-    <button id="upload-toggle-btn" class="toolbar-btn" aria-label="データアップロード">
-      <span class="material-icons">cloud_upload</span>
     </button>
   </div>
 
@@ -201,6 +205,68 @@
     </div>
   </div>
 
+  <!-- ===== RIGHT SIDE — FIELD DATA PANEL ===== -->
+  <div id="fielddata-panel" class="side-panel right-panel hidden">
+    <div class="panel-header">
+      <span class="material-icons panel-icon" style="color: var(--forest-accent);">photo_camera</span>
+      <h2>現場データ</h2>
+      <button class="panel-close-btn icon-btn" data-panel="fielddata-panel">
+        <span class="material-icons">close</span>
+      </button>
+    </div>
+
+    <div class="panel-body">
+      <!-- Field Data Stats -->
+      <div class="fd-stats" id="fd-stats">
+        <div class="fd-stat-row">
+          <span class="material-icons">analytics</span>
+          <span>観測データ: <strong id="fd-count">0</strong> 件</span>
+        </div>
+        <div class="fd-stat-row fd-pending-row hidden" id="fd-pending-row">
+          <span class="material-icons" style="color: var(--gm-yellow);">sync</span>
+          <span>AI判定保留: <strong id="fd-pending-count">0</strong> 件</span>
+        </div>
+      </div>
+
+      <!-- Photo Upload -->
+      <button id="fd-add-photo-btn" class="primary-btn fd-add-btn">
+        <span class="material-icons">add_a_photo</span>
+        📸 写真を追加
+      </button>
+      <input type="file" id="photo-input" accept="image/*" multiple capture="environment" hidden>
+
+      <!-- Photo Dropzone -->
+      <div id="photo-dropzone" class="upload-dropzone fd-dropzone">
+        <span class="material-icons upload-icon">add_photo_alternate</span>
+        <p>写真をドラッグ＆ドロップ</p>
+        <span class="upload-hint">JPG, PNG に対応 · GPS付き写真推奨</span>
+      </div>
+
+      <!-- Observation List -->
+      <div class="section-title" style="margin-top: 16px;">
+        <span class="material-icons">list</span>
+        観測データ一覧
+      </div>
+      <div id="fd-observation-list" class="fd-observation-list">
+        <div class="empty-state">
+          <span class="material-icons">photo_library</span>
+          <p>観測データはまだありません</p>
+        </div>
+      </div>
+
+      <!-- Action Buttons -->
+      <div class="fd-actions">
+        <button id="fd-export-btn" class="secondary-btn" style="flex:1;">
+          <span class="material-icons">file_download</span>
+          📤 CSVエクスポート
+        </button>
+        <button id="fd-settings-btn" class="secondary-btn" style="width:44px; padding:8px;">
+          <span class="material-icons">settings</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
   <!-- ===== LAYER SELECTION MODAL ===== -->
   <div id="layer-modal" class="modal-overlay hidden">
     <div class="modal-container">
@@ -231,6 +297,144 @@
         </div>
       </div>
     </div>
+  </div>
+
+  <!-- ===== OBSERVATION POPUP MODAL ===== -->
+  <div id="observation-popup" class="modal-overlay hidden">
+    <div class="modal-container fd-popup-container">
+      <div class="modal-header">
+        <h2>
+          <span class="material-icons" style="color: var(--forest-accent);">eco</span>
+          観測データ詳細
+        </h2>
+        <button class="fd-popup-close icon-btn">
+          <span class="material-icons">close</span>
+        </button>
+      </div>
+      <div class="modal-body fd-popup-body" id="fd-popup-body">
+        <!-- Populated by JS -->
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== CONFIRM MODAL (AI Result Preview) ===== -->
+  <div id="confirm-modal" class="modal-overlay hidden">
+    <div class="modal-container fd-confirm-container">
+      <div class="modal-header">
+        <h2>
+          <span class="material-icons" style="color: var(--forest-accent);">fact_check</span>
+          判定結果の確認
+        </h2>
+        <button class="fd-confirm-close icon-btn">
+          <span class="material-icons">close</span>
+        </button>
+      </div>
+      <div class="modal-body" id="fd-confirm-body">
+        <!-- Populated by JS -->
+      </div>
+      <div class="fd-confirm-actions">
+        <button id="fd-confirm-save" class="primary-btn" style="background: var(--forest-primary);">
+          <span class="material-icons">save</span>
+          保存
+        </button>
+        <button id="fd-confirm-edit" class="secondary-btn">
+          <span class="material-icons">edit</span>
+          手動で編集
+        </button>
+        <button id="fd-confirm-cancel" class="secondary-btn">
+          <span class="material-icons">cancel</span>
+          キャンセル
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== MANUAL INPUT MODAL ===== -->
+  <div id="manual-input-modal" class="modal-overlay hidden">
+    <div class="modal-container fd-manual-container">
+      <div class="modal-header">
+        <h2>
+          <span class="material-icons" style="color: var(--gm-blue);">edit_note</span>
+          手動入力
+        </h2>
+        <button class="fd-manual-close icon-btn">
+          <span class="material-icons">close</span>
+        </button>
+      </div>
+      <div class="modal-body" id="fd-manual-body">
+        <!-- Populated by JS -->
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== EXPORT MODAL ===== -->
+  <div id="export-modal" class="modal-overlay hidden">
+    <div class="modal-container fd-export-container">
+      <div class="modal-header">
+        <h2>
+          <span class="material-icons" style="color: var(--gm-blue);">file_download</span>
+          CSVエクスポート
+        </h2>
+        <button class="fd-export-close icon-btn">
+          <span class="material-icons">close</span>
+        </button>
+      </div>
+      <div class="modal-body" id="fd-export-body">
+        <!-- Populated by JS -->
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== SETTINGS MODAL ===== -->
+  <div id="settings-modal" class="modal-overlay hidden">
+    <div class="modal-container fd-settings-container">
+      <div class="modal-header">
+        <h2>
+          <span class="material-icons" style="color: var(--gm-text-secondary);">settings</span>
+          設定
+        </h2>
+        <button class="fd-settings-close icon-btn">
+          <span class="material-icons">close</span>
+        </button>
+      </div>
+      <div class="modal-body" id="fd-settings-body">
+        <!-- Populated by JS -->
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== PRIVACY MODAL ===== -->
+  <div id="privacy-modal" class="modal-overlay hidden">
+    <div class="modal-container fd-privacy-container">
+      <div class="modal-header">
+        <h2>
+          <span class="material-icons" style="color: var(--forest-accent);">shield</span>
+          プライバシーについて
+        </h2>
+      </div>
+      <div class="modal-body fd-privacy-body">
+        <div class="fd-privacy-content">
+          <p><strong>ForestScope 現場データモード</strong>は、写真と位置情報をすべてあなたのブラウザ内（IndexedDB）にのみ保存します。</p>
+          <p>データが外部に送信されるのは、<strong>AI種同定のためにPl@ntNet / iNaturalistへ画像を送信する時のみ</strong>です。</p>
+          <p>判定APIを使わない場合は、<strong>完全にローカルで動作</strong>します。</p>
+        </div>
+      </div>
+      <div class="fd-confirm-actions">
+        <button id="fd-privacy-accept" class="primary-btn" style="background: var(--forest-primary);">
+          <span class="material-icons">check_circle</span>
+          理解しました
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== LOCATION PICKER HINT ===== -->
+  <div id="location-picker-hint" class="fd-location-hint hidden">
+    <span class="material-icons">touch_app</span>
+    <span>地球上をクリックして撮影地点を指定してください</span>
+    <button id="location-picker-cancel" class="icon-btn">
+      <span class="material-icons">close</span>
+    </button>
   </div>
 
   <!-- ===== PREVIEW BAR (Bottom) ===== -->
