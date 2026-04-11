@@ -468,6 +468,38 @@
     Map data ©2026 ForestScope | Imagery ©2026 JAXA, ESA, NASA | <a href="#">利用規約</a>
   </div>
 
+  <!-- ===== BOTTOM NAVIGATION BAR (Mobile) ===== -->
+  <nav id="bottom-nav">
+    <button class="bnav-item active" data-tab="home" aria-label="ホーム">
+      <span class="material-icons">public</span>
+      <span class="bnav-label">ホーム</span>
+    </button>
+    <button class="bnav-item" data-tab="camera" aria-label="撮影">
+      <span class="material-icons">photo_camera</span>
+      <span class="bnav-label">撮影</span>
+    </button>
+    <button class="bnav-item" data-tab="data" aria-label="データ">
+      <span class="material-icons">analytics</span>
+      <span class="bnav-label">データ</span>
+    </button>
+    <button class="bnav-item" data-tab="regions" aria-label="地域">
+      <span class="material-icons">forest</span>
+      <span class="bnav-label">地域</span>
+    </button>
+    <button class="bnav-item" data-tab="settings" aria-label="設定">
+      <span class="material-icons">settings</span>
+      <span class="bnav-label">設定</span>
+    </button>
+  </nav>
+
+  <!-- ===== BOTTOM SHEET (Mobile) ===== -->
+  <div id="bottom-sheet" class="bsheet hidden">
+    <div class="bsheet-handle"></div>
+    <div class="bsheet-content" id="bsheet-content">
+      <!-- Populated by JS -->
+    </div>
+  </div>
+
   <!-- ===== TOAST NOTIFICATIONS ===== -->
   <div id="toast-container"></div>
 

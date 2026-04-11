@@ -1534,6 +1534,327 @@ a:hover {
 }
 
 /* ============================================================
+   BOTTOM NAVIGATION BAR (Mobile-first)
+   ============================================================ */
+#bottom-nav {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  #bottom-nav {
+    display: flex;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 500;
+    background: var(--gm-white);
+    box-shadow: 0 -2px 12px rgba(0, 0, 0, 0.15);
+    padding: 4px 0;
+    padding-bottom: max(4px, env(safe-area-inset-bottom));
+    justify-content: space-around;
+    align-items: center;
+  }
+
+  .bnav-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+    padding: 6px 12px;
+    border-radius: 16px;
+    color: var(--gm-text-tertiary);
+    transition: color 0.2s, background 0.2s;
+    -webkit-tap-highlight-color: transparent;
+    min-width: 56px;
+  }
+
+  .bnav-item .material-icons {
+    font-size: 22px;
+    transition: transform 0.2s;
+  }
+
+  .bnav-label {
+    font-size: 10px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+
+  .bnav-item.active {
+    color: var(--forest-primary);
+  }
+
+  .bnav-item.active .material-icons {
+    transform: scale(1.1);
+  }
+
+  .bnav-item:active {
+    background: var(--gm-surface);
+  }
+
+  /* Hide desktop elements on mobile */
+  #search-bar,
+  #top-right-toolbar,
+  #map-controls,
+  #mini-earth,
+  #forest-panel,
+  #fielddata-panel,
+  #satellite-panel {
+    display: none !important;
+  }
+
+  /* Adjust toast position above bottom nav */
+  #toast-container {
+    bottom: 80px;
+  }
+
+  /* Adjust attribution above bottom nav */
+  #map-attribution {
+    bottom: 62px;
+    left: 8px;
+    right: auto;
+  }
+
+  /* Location picker hint */
+  .fd-location-hint {
+    top: auto;
+    bottom: 80px;
+    width: 90%;
+  }
+}
+
+/* ============================================================
+   BOTTOM SHEET (Mobile)
+   ============================================================ */
+.bsheet {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .bsheet {
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 450;
+    background: var(--gm-white);
+    border-radius: 16px 16px 0 0;
+    box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.2);
+    max-height: 70vh;
+    transform: translateY(0);
+    transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+                opacity 0.25s;
+    padding-bottom: max(56px, calc(56px + env(safe-area-inset-bottom)));
+  }
+
+  .bsheet.hidden {
+    transform: translateY(100%);
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .bsheet-handle {
+    width: 36px;
+    height: 4px;
+    background: var(--gm-border);
+    border-radius: 2px;
+    margin: 10px auto 6px;
+    flex-shrink: 0;
+  }
+
+  .bsheet-content {
+    overflow-y: auto;
+    padding: 8px 16px 16px;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* ---- Bottom Sheet Inner Styles ---- */
+  .bsheet-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: 'Google Sans', 'Roboto', sans-serif;
+    font-size: 16px;
+    font-weight: 500;
+    color: var(--gm-text-primary);
+    margin-bottom: 12px;
+  }
+
+  .bsheet-title .material-icons {
+    font-size: 20px;
+    color: var(--forest-accent);
+  }
+
+  .bsheet-section {
+    margin-bottom: 16px;
+  }
+
+  .bsheet-section-title {
+    font-size: 12px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--gm-text-tertiary);
+    margin-bottom: 8px;
+  }
+
+  /* Stats Grid in bottom sheet */
+  .bsheet-stats-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+
+  .bsheet-stat {
+    background: var(--gm-surface);
+    border-radius: 10px;
+    padding: 10px;
+    text-align: center;
+  }
+
+  .bsheet-stat-value {
+    font-family: 'Google Sans', sans-serif;
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--gm-text-primary);
+  }
+
+  .bsheet-stat-label {
+    font-size: 10px;
+    color: var(--gm-text-secondary);
+    margin-top: 2px;
+  }
+
+  .bsheet-stat-trend {
+    font-size: 10px;
+    margin-top: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 2px;
+  }
+
+  .bsheet-stat-trend .material-icons {
+    font-size: 12px;
+  }
+
+  .bsheet-stat-trend.up { color: var(--forest-accent); }
+  .bsheet-stat-trend.down { color: var(--gm-red); }
+  .bsheet-stat-trend.neutral { color: var(--gm-text-tertiary); }
+
+  /* Camera tab in bottom sheet */
+  .bsheet-camera-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    width: 100%;
+    padding: 14px;
+    background: var(--forest-primary);
+    color: white;
+    font-size: 15px;
+    font-weight: 500;
+    border-radius: 12px;
+    margin-bottom: 12px;
+    transition: background 0.15s, box-shadow 0.15s;
+  }
+
+  .bsheet-camera-btn:hover,
+  .bsheet-camera-btn:active {
+    background: var(--forest-dark);
+    box-shadow: 0 4px 12px rgba(46, 125, 50, 0.4);
+  }
+
+  .bsheet-camera-btn .material-icons {
+    font-size: 22px;
+  }
+
+  /* Region list in bottom sheet */
+  .bsheet-region-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 8px;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.15s;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .bsheet-region-item:active {
+    background: var(--gm-surface);
+  }
+
+  .bsheet-region-flag {
+    font-size: 24px;
+    width: 32px;
+    text-align: center;
+  }
+
+  .bsheet-region-info {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .bsheet-region-name {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--gm-text-primary);
+  }
+
+  .bsheet-region-stats {
+    font-size: 11px;
+    color: var(--gm-text-secondary);
+  }
+
+  .bsheet-region-bar {
+    width: 60px;
+    height: 4px;
+    background: var(--gm-border);
+    border-radius: 2px;
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+
+  .bsheet-region-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--forest-primary), var(--forest-accent));
+    border-radius: 2px;
+    transition: width 0.5s ease;
+  }
+
+  /* Observation list in bottom sheet */
+  .bsheet-obs-list {
+    max-height: 300px;
+    overflow-y: auto;
+  }
+
+  /* Export & backup buttons */
+  .bsheet-action-row {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+  }
+
+  .bsheet-action-row .secondary-btn {
+    flex: 1;
+    font-size: 12px;
+    padding: 10px 8px;
+    border-radius: 10px;
+  }
+
+  /* Dropzone in bottom sheet */
+  .bsheet .upload-dropzone {
+    padding: 16px 12px;
+    margin-bottom: 12px;
+  }
+}
+
+/* ============================================================
    FIELD DATA — Observation Markers (Globe)
    ============================================================ */
 .observation-marker {
@@ -2297,6 +2618,15 @@ a:hover {
     max-width: 95%;
   }
 
+  .fd-confirm-container,
+  .fd-manual-container,
+  .fd-export-container,
+  .fd-settings-container,
+  .fd-privacy-container {
+    max-width: 95%;
+    max-height: 85vh;
+  }
+
   .fd-confirm-preview {
     flex-direction: column;
   }
@@ -2310,12 +2640,11 @@ a:hover {
     flex-direction: column;
   }
 
-  .fd-location-hint {
-    width: 90%;
-    font-size: 12px;
+  .fd-popup-actions {
+    flex-direction: column;
   }
 
-  .fd-popup-actions {
+  .fd-confirm-actions {
     flex-direction: column;
   }
 }

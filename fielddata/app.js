@@ -2440,3 +2440,339 @@ function renderObservationList(observations) {
     });
   });
 }
+
+// ============================================================
+// BOTTOM NAVIGATION & BOTTOM SHEET (Mobile)
+// ============================================================
+let currentBnavTab = 'home';
+
+function initBottomNav() {
+  const nav = $('#bottom-nav');
+  if (!nav) return;
+
+  nav.querySelectorAll('.bnav-item').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const tab = btn.dataset.tab;
+      // Update active state
+      nav.querySelectorAll('.bnav-item').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+
+      if (tab === 'home') {
+        closeBsheet();
+        currentBnavTab = 'home';
+        return;
+      }
+
+      currentBnavTab = tab;
+      openBsheetForTab(tab);
+    });
+  });
+}
+
+function openBsheetForTab(tab) {
+  const sheet = $('#bottom-sheet');
+  const content = $('#bsheet-content');
+  if (!sheet || !content) return;
+
+  switch (tab) {
+    case 'camera':
+      renderBsheetCamera(content);
+      break;
+    case 'data':
+      renderBsheetData(content);
+      break;
+    case 'regions':
+      renderBsheetRegions(content);
+      break;
+    case 'settings':
+      renderBsheetSettings(content);
+      break;
+    default:
+      return;
+  }
+
+  sheet.classList.remove('hidden');
+}
+
+function closeBsheet() {
+  const sheet = $('#bottom-sheet');
+  if (sheet) sheet.classList.add('hidden');
+}
+
+// ---- Camera Tab ----
+function renderBsheetCamera(container) {
+  const count = state.observations.length;
+  const pendingCount = state.observations.filter(o => o.pendingAIIdentification).length;
+
+  container.innerHTML = `
+    <div class="bsheet-title">
+      <span class="material-icons">photo_camera</span>
+      撮影 & データ追加
+    </div>
+    <button class="bsheet-camera-btn" id="bsheet-photo-btn">
+      <span class="material-icons">add_a_photo</span>
+      📸 写真を撮影 / 選択
+    </button>
+    <div class="upload-dropzone fd-dropzone" id="bsheet-dropzone">
+      <span class="material-icons upload-icon">add_photo_alternate</span>
+      <p>写真をドラッグ＆ドロップ</p>
+      <span class="upload-hint">JPG, PNG に対応 · GPS付き写真推奨</span>
+    </div>
+    <div class="bsheet-stats-grid">
+      <div class="bsheet-stat">
+        <div class="bsheet-stat-value">${count}</div>
+        <div class="bsheet-stat-label">観測データ</div>
+      </div>
+      <div class="bsheet-stat">
+        <div class="bsheet-stat-value">${pendingCount}</div>
+        <div class="bsheet-stat-label">AI判定保留</div>
+      </div>
+    </div>
+  `;
+
+  // Bind photo button
+  container.querySelector('#bsheet-photo-btn').addEventListener('click', () => {
+    $('#photo-input').click();
+  });
+
+  // Bind dropzone
+  const dz = container.querySelector('#bsheet-dropzone');
+  dz.addEventListener('click', () => { $('#photo-input').click(); });
+  dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('dragover'); });
+  dz.addEventListener('dragleave', () => { dz.classList.remove('dragover'); });
+  dz.addEventListener('drop', e => { e.preventDefault(); dz.classList.remove('dragover'); handlePhotoUpload(e.dataTransfer.files); });
+}
+
+// ---- Data Tab ----
+function renderBsheetData(container) {
+  const count = state.observations.length;
+
+  let listHtml = '';
+  if (count === 0) {
+    listHtml = `<div class="empty-state" style="padding:20px 0;"><span class="material-icons">photo_library</span><p>観測データはまだありません</p></div>`;
+  } else {
+    listHtml = state.observations.slice().reverse().map(obs => {
+      const species = obs.species?.[0];
+      const name = species?.name || '不明';
+      const catIcon = species ? CATEGORY_ICONS[species.category] || 'help_outline' : 'photo_camera';
+      const dateStr = formatDateTime(obs.capturedAt);
+      return `
+        <div class="fd-obs-item" data-obs-id="${obs.id}">
+          <div class="fd-obs-thumb"><img src="${obs.imageBase64}" alt="" loading="lazy"></div>
+          <div class="fd-obs-info">
+            <div class="fd-obs-name">${name}</div>
+            <div class="fd-obs-meta">${dateStr}</div>
+          </div>
+          ${obs.pendingAIIdentification ? '<span class="fd-obs-pending">🔄</span>' : `<div class="fd-obs-category-icon"><span class="material-icons">${catIcon}</span></div>`}
+        </div>
+      `;
+    }).join('');
+  }
+
+  container.innerHTML = `
+    <div class="bsheet-title">
+      <span class="material-icons">analytics</span>
+      観測データ（${count}件）
+    </div>
+    <div class="bsheet-obs-list">${listHtml}</div>
+    <div class="bsheet-action-row">
+      <button class="secondary-btn" id="bsheet-export-btn">
+        <span class="material-icons">file_download</span> CSV出力
+      </button>
+      <button class="secondary-btn" id="bsheet-backup-btn">
+        <span class="material-icons">cloud_download</span> バックアップ
+      </button>
+    </div>
+  `;
+
+  // Bind observation items
+  container.querySelectorAll('.fd-obs-item').forEach(item => {
+    item.addEventListener('click', () => {
+      const obs = state.observations.find(o => o.id === item.dataset.obsId);
+      if (obs) {
+        closeBsheet();
+        showObservationPopup(obs);
+        flyTo(obs.lat, obs.lng, 2.0);
+      }
+    });
+  });
+
+  // Bind export
+  container.querySelector('#bsheet-export-btn')?.addEventListener('click', () => {
+    closeBsheet();
+    showExportModal();
+  });
+
+  // Bind backup
+  container.querySelector('#bsheet-backup-btn')?.addEventListener('click', async () => {
+    const obs = await getAllObservations();
+    const json = JSON.stringify(obs, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'forestscope_backup.json';
+    document.body.appendChild(a); a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast('success', 'バックアップをエクスポートしました');
+  });
+}
+
+// ---- Regions Tab ----
+function renderBsheetRegions(container) {
+  const regionsHtml = REGIONS_DATA.map(r => `
+    <div class="bsheet-region-item" data-lat="${r.lat}" data-lng="${r.lng}" data-name="${r.name}">
+      <span class="bsheet-region-flag">${r.flag}</span>
+      <div class="bsheet-region-info">
+        <div class="bsheet-region-name">${r.name}</div>
+        <div class="bsheet-region-stats">${r.trees} · ${r.area}</div>
+      </div>
+      <div class="bsheet-region-bar">
+        <div class="bsheet-region-bar-fill" data-target="${r.pct}" style="width: 0%;"></div>
+      </div>
+    </div>
+  `).join('');
+
+  container.innerHTML = `
+    <div class="bsheet-title">
+      <span class="material-icons">forest</span>
+      地域別森林データ
+    </div>
+    <div class="bsheet-stats-grid">
+      <div class="bsheet-stat">
+        <div class="bsheet-stat-value">3.04T</div>
+        <div class="bsheet-stat-label">推定樹木数</div>
+        <div class="bsheet-stat-trend up"><span class="material-icons">trending_up</span> +0.3%</div>
+      </div>
+      <div class="bsheet-stat">
+        <div class="bsheet-stat-value">4.06B ha</div>
+        <div class="bsheet-stat-label">森林面積</div>
+        <div class="bsheet-stat-trend down"><span class="material-icons">trending_down</span> −4.7M/年</div>
+      </div>
+      <div class="bsheet-stat">
+        <div class="bsheet-stat-value">2.6Gt</div>
+        <div class="bsheet-stat-label">CO₂吸収量</div>
+        <div class="bsheet-stat-trend neutral"><span class="material-icons">trending_flat</span> 安定</div>
+      </div>
+      <div class="bsheet-stat">
+        <div class="bsheet-stat-value">73,300+</div>
+        <div class="bsheet-stat-label">樹種数</div>
+        <div class="bsheet-stat-trend up"><span class="material-icons">trending_up</span> +9,200</div>
+      </div>
+    </div>
+    <div class="bsheet-section-title">地域をタップして移動</div>
+    ${regionsHtml}
+  `;
+
+  // Animate bars
+  requestAnimationFrame(() => {
+    setTimeout(() => {
+      container.querySelectorAll('.bsheet-region-bar-fill').forEach(bar => {
+        bar.style.width = bar.dataset.target + '%';
+      });
+    }, 100);
+  });
+
+  // Bind region items
+  container.querySelectorAll('.bsheet-region-item').forEach(item => {
+    item.addEventListener('click', () => {
+      const lat = parseFloat(item.dataset.lat);
+      const lng = parseFloat(item.dataset.lng);
+      closeBsheet();
+      flyTo(lat, lng, 1.8);
+      showToast('info', `${item.dataset.name} エリアにフォーカス`);
+    });
+  });
+}
+
+// ---- Settings Tab ----
+function renderBsheetSettings(container) {
+  const plantNetKey = localStorage.getItem('forestscope-plantnet-key') || '';
+  const useINat = localStorage.getItem('forestscope-use-inaturalist') !== 'false';
+
+  container.innerHTML = `
+    <div class="bsheet-title">
+      <span class="material-icons" style="color: var(--gm-text-tertiary);">settings</span>
+      設定
+    </div>
+
+    <div class="bsheet-section">
+      <div class="bsheet-section-title">AI 判定エンジン</div>
+      <div class="fd-form-group">
+        <label>Pl@ntNet API キー</label>
+        <input type="password" id="bsheet-plantnet-key" value="${plantNetKey}" placeholder="APIキーを入力...">
+      </div>
+      <div class="fd-settings-hint" style="margin-bottom:12px;">
+        <a href="https://my.plantnet.org/" target="_blank" rel="noopener">my.plantnet.org</a> で取得
+      </div>
+      <div class="fd-toggle-row">
+        <label>iNaturalist を使用</label>
+        <div class="fd-toggle">
+          <input type="checkbox" id="bsheet-inat" ${useINat ? 'checked' : ''}>
+          <span class="fd-toggle-slider"></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="bsheet-section">
+      <div class="bsheet-section-title">データ管理</div>
+      <div class="bsheet-action-row">
+        <button class="secondary-btn" id="bsheet-import-btn">
+          <span class="material-icons">cloud_upload</span> 復元
+        </button>
+        <button class="secondary-btn fd-danger-btn" id="bsheet-clear-btn">
+          <span class="material-icons">delete_forever</span> 全削除
+        </button>
+      </div>
+      <input type="file" id="bsheet-import-input" accept=".json" hidden>
+    </div>
+
+    <button class="primary-btn" style="background: var(--forest-primary); border-radius:10px;" id="bsheet-save-settings">
+      <span class="material-icons">save</span> 設定を保存
+    </button>
+  `;
+
+  // Save
+  container.querySelector('#bsheet-save-settings').addEventListener('click', () => {
+    localStorage.setItem('forestscope-plantnet-key', container.querySelector('#bsheet-plantnet-key').value.trim());
+    localStorage.setItem('forestscope-use-inaturalist', container.querySelector('#bsheet-inat').checked ? 'true' : 'false');
+    showToast('success', '設定を保存しました');
+    closeBsheet();
+  });
+
+  // Import
+  container.querySelector('#bsheet-import-btn').addEventListener('click', () => {
+    container.querySelector('#bsheet-import-input').click();
+  });
+  container.querySelector('#bsheet-import-input').addEventListener('change', async (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      if (!Array.isArray(data)) throw new Error('Invalid format');
+      for (const obs of data) { await saveObservation(obs); }
+      observationMarkers.forEach(m => earthGroup.remove(m.obj));
+      observationMarkers.length = 0;
+      await loadObservationsToGlobe();
+      showToast('success', `${data.length} 件のデータを復元しました`);
+    } catch (err) {
+      showToast('error', '復元に失敗しました');
+    }
+  });
+
+  // Clear
+  container.querySelector('#bsheet-clear-btn').addEventListener('click', async () => {
+    if (!confirm('すべての観測データを削除しますか？')) return;
+    await clearAllObservations();
+    observationMarkers.forEach(m => earthGroup.remove(m.obj));
+    observationMarkers.length = 0;
+    state.observations = [];
+    showToast('info', 'すべてのデータを削除しました');
+    closeBsheet();
+  });
+}
+
+// Initialize bottom nav on page load
+document.addEventListener('DOMContentLoaded', () => {
+  initBottomNav();
+});
