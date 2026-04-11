@@ -134,6 +134,7 @@ let state = {
 // ============================================================
 let scene, camera, renderer, labelRenderer, controls;
 let earthGroup, earth, clouds, atmosphere, stars;
+let sunLight;
 let treeTrunks, treeCrowns;
 let overlayMesh;
 let clock;
@@ -166,9 +167,8 @@ document.addEventListener('DOMContentLoaded', () => {
   createAtmosphere();
   createClouds();
   createSatelliteOverlay();
-  createForestTrees();
+  // Trees & detailed forest removed per user request
   createRegionLabels();
-  createDetailedForest();
   renderRegions();
   renderSpecies();
   renderSatelliteCatalog();
@@ -209,8 +209,8 @@ function initScene() {
   labelRenderer.domElement.style.pointerEvents = 'none';
   container.appendChild(labelRenderer.domElement);
 
-  // Lights
-  const sunLight = new THREE.DirectionalLight(0xffffff, 2.0);
+  // Lights — sunLight stored globally so animate() can update it
+  sunLight = new THREE.DirectionalLight(0xffffff, 2.0);
   sunLight.position.set(5, 3, 5);
   scene.add(sunLight);
 
@@ -221,10 +221,10 @@ function initScene() {
   rimLight.position.set(-3, -1, -3);
   scene.add(rimLight);
 
-  // Controls
+  // Controls — Google Earth-like sensitivity
   controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
-  controls.dampingFactor = 0.06;
+  controls.dampingFactor = 0.08;
   controls.minDistance = 1.002;
   controls.maxDistance = 8;
   controls.autoRotate = true;
@@ -895,11 +895,19 @@ function animate() {
 
   // Update detail levels based on camera distance
   const dist = camera.position.length();
-  updateTreeVisibility(dist);
   updateLabelVisibility(dist);
-  updateDetailedForest(dist, time, delta);
   updateSceneBackground(dist);
   updateObservationMarkerVisibility(dist);
+
+  // ---- Sun follows camera (always daytime on visible face) ----
+  if (sunLight) {
+    sunLight.position.copy(camera.position).normalize().multiplyScalar(10);
+  }
+
+  // ---- Dynamic rotate speed (Google Earth-like) ----
+  // When zoomed in, reduce sensitivity so the globe moves proportionally
+  const normalizedDist = (dist - controls.minDistance) / (controls.maxDistance - controls.minDistance);
+  controls.rotateSpeed = 0.15 + normalizedDist * 0.6; // 0.15 when close, 0.75 when far
 
   controls.update();
   renderer.render(scene, camera);
@@ -1721,6 +1729,19 @@ async function processPhoto(file) {
       console.warn('EXIF extraction failed:', exifErr);
     }
 
+    // 2b. Fallback: use device GPS if EXIF has no location
+    if (lat === null || lng === null) {
+      showProcessingOverlay('位置情報を取得中...');
+      try {
+        const pos = await getDeviceLocation();
+        lat = pos.latitude;
+        lng = pos.longitude;
+        showToast('success', `現在地を取得: ${lat.toFixed(4)}, ${lng.toFixed(4)}`);
+      } catch (geoErr) {
+        console.warn('Device geolocation failed:', geoErr);
+      }
+    }
+
     if (!capturedAt) capturedAt = new Date().toISOString();
 
     const observation = {
@@ -1735,21 +1756,32 @@ async function processPhoto(file) {
       pendingAIIdentification: false,
     };
 
-    hideProcessingOverlay();
-
-    // 3. If no GPS, ask user to pick location
+    // 3. If still no GPS (user denied or unavailable), ask to pick on globe
     if (lat === null || lng === null) {
+      hideProcessingOverlay();
       await showLocationPicker(observation);
-      return; // Flow continues in handleGlobeClickForLocation
+      return;
     }
 
-    // 4. Run AI identification
-    await runAIAndConfirm(observation);
+    // 4. Run AI identification and auto-save
+    await runAIAndAutoSave(observation);
   } catch (err) {
     hideProcessingOverlay();
     console.error('Photo processing error:', err);
     showToast('error', '写真の処理に失敗しました');
   }
+}
+
+// Device GPS helper
+function getDeviceLocation() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) { reject(new Error('Geolocation not supported')); return; }
+    navigator.geolocation.getCurrentPosition(
+      pos => resolve({ latitude: pos.coords.latitude, longitude: pos.coords.longitude }),
+      err => reject(err),
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+    );
+  });
 }
 
 async function runAIAndConfirm(observation) {
@@ -1765,6 +1797,77 @@ async function runAIAndConfirm(observation) {
     observation.pendingAIIdentification = false;
     showManualInputModal(observation);
   }
+}
+
+// Auto-save flow: identify → save → plot → show result toast
+async function runAIAndAutoSave(observation) {
+  showProcessingOverlay('AI判定中...');
+  const result = await identifySpecies(observation.imageBase64);
+  hideProcessingOverlay();
+
+  if (result) {
+    observation.species = result.species;
+    observation.pendingAIIdentification = false;
+  } else {
+    // No AI result — mark as pending, save anyway
+    observation.pendingAIIdentification = !navigator.onLine;
+  }
+
+  // Auto-save
+  await saveObservation(observation);
+  addObservationMarker(observation);
+  state.observations.push(observation);
+  renderFieldDataPanel();
+
+  // Fly to the observation location
+  flyTo(observation.lat, observation.lng, 2.0);
+
+  // Show result
+  if (observation.species.length > 0) {
+    const top = observation.species[0];
+    const confidence = Math.round((top.confidence || 0) * 100);
+    showToast('success', `📸 ${top.name} (${confidence}%) — 保存しました`);
+    // Show inline result popup
+    showQuickResult(observation);
+  } else {
+    showToast('info', '📸 写真を保存しました（種不明）');
+    showManualInputModal(observation);
+  }
+}
+
+// Quick result display
+function showQuickResult(observation) {
+  const existing = document.querySelector('.fd-quick-result');
+  if (existing) existing.remove();
+
+  const sp = observation.species[0];
+  const div = document.createElement('div');
+  div.className = 'fd-quick-result';
+  div.innerHTML = `
+    <div class="fd-qr-content">
+      <img src="${observation.imageBase64}" class="fd-qr-thumb" alt="">
+      <div class="fd-qr-info">
+        <div class="fd-qr-name">${sp.name}</div>
+        <div class="fd-qr-scientific">${sp.scientificName || ''}</div>
+        <div class="fd-qr-meta">
+          <span class="material-icons" style="font-size:14px;">${CATEGORY_ICONS[sp.category] || 'help_outline'}</span>
+          ${Math.round((sp.confidence || 0) * 100)}% · ${sp.source}
+        </div>
+      </div>
+      <button class="fd-qr-close"><span class="material-icons">close</span></button>
+    </div>
+  `;
+  document.body.appendChild(div);
+
+  div.querySelector('.fd-qr-close').addEventListener('click', () => div.remove());
+  div.addEventListener('click', (e) => {
+    if (e.target.closest('.fd-qr-close')) return;
+    div.remove();
+    showObservationPopup(observation);
+  });
+
+  // Auto-dismiss after 8 seconds
+  setTimeout(() => { if (div.parentNode) div.remove(); }, 8000);
 }
 
 function showProcessingOverlay(text) {
@@ -1834,8 +1937,8 @@ function handleGlobeClickForLocation(event) {
 
     showToast('success', `位置を設定: ${lat.toFixed(4)}, ${lng.toFixed(4)}`);
 
-    // Continue with AI identification
-    runAIAndConfirm(obs);
+    // Continue with AI identification and auto-save
+    runAIAndAutoSave(obs);
   }
 }
 

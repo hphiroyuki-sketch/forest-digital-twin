@@ -1534,6 +1534,89 @@ a:hover {
 }
 
 /* ============================================================
+   FIELD DATA — Quick Result Popup
+   ============================================================ */
+.fd-quick-result {
+  position: fixed;
+  bottom: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 600;
+  animation: fdQrSlideUp 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  max-width: 360px;
+  width: calc(100% - 32px);
+}
+
+@keyframes fdQrSlideUp {
+  from { transform: translateX(-50%) translateY(40px); opacity: 0; }
+  to { transform: translateX(-50%) translateY(0); opacity: 1; }
+}
+
+.fd-qr-content {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--gm-white);
+  border-radius: 14px;
+  padding: 10px 14px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.2);
+  cursor: pointer;
+}
+
+.fd-qr-thumb {
+  width: 48px;
+  height: 48px;
+  border-radius: 8px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.fd-qr-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.fd-qr-name {
+  font-family: 'Google Sans', sans-serif;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--gm-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fd-qr-scientific {
+  font-size: 11px;
+  color: var(--gm-text-tertiary);
+  font-style: italic;
+}
+
+.fd-qr-meta {
+  font-size: 11px;
+  color: var(--forest-accent);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 2px;
+}
+
+.fd-qr-close {
+  color: var(--gm-text-tertiary);
+  padding: 4px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.fd-qr-close:hover {
+  background: var(--gm-surface);
+}
+
+.fd-qr-close .material-icons {
+  font-size: 18px;
+}
+
+/* ============================================================
    BOTTOM NAVIGATION BAR (Mobile-first)
    ============================================================ */
 #bottom-nav {
@@ -1591,6 +1674,36 @@ a:hover {
 
   .bnav-item:active {
     background: var(--gm-surface);
+  }
+
+  /* Center camera button - prominent */
+  .bnav-center {
+    position: relative;
+    bottom: 10px;
+    background: var(--forest-primary);
+    color: white !important;
+    border-radius: 50%;
+    width: 52px;
+    height: 52px;
+    min-width: 52px;
+    padding: 0;
+    box-shadow: 0 4px 12px rgba(46, 125, 50, 0.4);
+    transition: transform 0.2s, box-shadow 0.2s;
+  }
+
+  .bnav-center .material-icons {
+    font-size: 26px;
+  }
+
+  .bnav-center .bnav-label {
+    display: none;
+  }
+
+  .bnav-center.active {
+    color: white !important;
+    background: var(--forest-dark);
+    transform: scale(1.1);
+    box-shadow: 0 6px 16px rgba(46, 125, 50, 0.5);
   }
 
   /* Hide desktop elements on mobile */
