@@ -138,6 +138,24 @@ a:hover {
   height: 100%;
 }
 
+/* CesiumJS overrides */
+.cesium-viewer,
+.cesium-viewer-cesiumWidgetContainer,
+.cesium-widget,
+.cesium-widget canvas {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.cesium-viewer .cesium-widget-credits {
+  display: none !important;
+}
+
+.cesium-viewer-toolbar,
+.cesium-viewer-bottom {
+  display: none !important;
+}
+
 /* 3D Globe Labels (CSS2DRenderer) */
 .globe-label {
   display: flex;
