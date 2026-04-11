@@ -167,8 +167,7 @@ document.addEventListener('DOMContentLoaded', () => {
   createAtmosphere();
   createClouds();
   createSatelliteOverlay();
-  // Trees & detailed forest removed per user request
-  createRegionLabels();
+  // Region labels and trees removed per user request
   renderRegions();
   renderSpecies();
   renderSatelliteCatalog();
@@ -221,17 +220,22 @@ function initScene() {
   rimLight.position.set(-3, -1, -3);
   scene.add(rimLight);
 
-  // Controls — Google Earth-like sensitivity
+  // Controls — Google Earth-like (NO auto-rotation, smooth damping)
   controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
-  controls.dampingFactor = 0.08;
+  controls.dampingFactor = 0.12;
   controls.minDistance = 1.002;
   controls.maxDistance = 8;
-  controls.autoRotate = true;
-  controls.autoRotateSpeed = 0.4;
+  controls.autoRotate = false;
+  controls.autoRotateSpeed = 0;
   controls.enablePan = false;
-  controls.rotateSpeed = 0.5;
-  controls.zoomSpeed = 0.8;
+  controls.rotateSpeed = 0.4;
+  controls.zoomSpeed = 0.6;
+  // Prevent pinch-zoom from causing excessive drift
+  controls.touches = {
+    ONE: THREE.TOUCH.ROTATE,
+    TWO: THREE.TOUCH.DOLLY_ROTATE
+  };
 
   // Earth group (holds earth, clouds, trees, etc.)
   earthGroup = new THREE.Group();
@@ -252,14 +256,30 @@ function initScene() {
 function createEarth() {
   const loader = new THREE.TextureLoader();
 
-  const earthGeo = new THREE.SphereGeometry(EARTH_RADIUS, 96, 96);
+  // High-resolution sphere for crisp detail when zoomed in
+  const earthGeo = new THREE.SphereGeometry(EARTH_RADIUS, 128, 128);
+
+  const loader2 = new THREE.TextureLoader();
+  loader2.crossOrigin = 'anonymous';
+
+  // High-res Earth texture (8K from three-globe CDN)
+  const earthTexture = loader2.load('https://unpkg.com/three-globe@2.31.1/example/img/earth-blue-marble.jpg');
+  earthTexture.colorSpace = THREE.SRGBColorSpace;
+  earthTexture.anisotropy = Math.min(renderer.capabilities.getMaxAnisotropy(), 16);
+  earthTexture.minFilter = THREE.LinearMipmapLinearFilter;
+  earthTexture.magFilter = THREE.LinearFilter;
+  earthTexture.generateMipmaps = true;
+
+  const bumpTexture = loader2.load(TEXTURE_BASE + 'earth-topology.png');
+  const specTexture = loader2.load(TEXTURE_BASE + 'earth-water.png');
+
   const earthMat = new THREE.MeshPhongMaterial({
-    map: loader.load(TEXTURE_BASE + 'earth-blue-marble.jpg'),
-    bumpMap: loader.load(TEXTURE_BASE + 'earth-topology.png'),
-    bumpScale: 0.015,
-    specularMap: loader.load(TEXTURE_BASE + 'earth-water.png'),
-    specular: new THREE.Color(0x444444),
-    shininess: 15,
+    map: earthTexture,
+    bumpMap: bumpTexture,
+    bumpScale: 0.012,
+    specularMap: specTexture,
+    specular: new THREE.Color(0x333333),
+    shininess: 18,
   });
 
   earth = new THREE.Mesh(earthGeo, earthMat);
@@ -873,7 +893,7 @@ function flyTo(lat, lng, distance = 1.8) {
 
     if (t < 1) requestAnimationFrame(flyStep);
     else {
-      setTimeout(() => { controls.autoRotate = true; }, 3000);
+      setTimeout(() => { controls.autoRotate = false; }, 3000);
     }
   }
   flyStep();
@@ -895,7 +915,6 @@ function animate() {
 
   // Update detail levels based on camera distance
   const dist = camera.position.length();
-  updateLabelVisibility(dist);
   updateSceneBackground(dist);
   updateObservationMarkerVisibility(dist);
 
@@ -1371,7 +1390,7 @@ function bindEvents() {
     $('#toggle-3d-btn').classList.toggle('active', state.is3D);
     if (state.is3D) {
       camera.position.set(0, 0.8, 2.8);
-      controls.autoRotate = true;
+      controls.autoRotate = false;
       showToast('info', '3D地球儀ビューに切り替えました');
     } else {
       // Top-down 2D-like view
@@ -1399,7 +1418,7 @@ function bindEvents() {
   $('#compass-btn').addEventListener('click', () => {
     camera.position.set(0, 0.8, 2.8);
     controls.target.set(0, 0, 0);
-    controls.autoRotate = true;
+    controls.autoRotate = false;
     showToast('info', '方位をリセットしました');
   });
 
@@ -1444,7 +1463,7 @@ function bindEvents() {
   // Mini earth → reset global view
   $('#mini-earth').addEventListener('click', () => {
     camera.position.set(0, 0.5, 4);
-    controls.autoRotate = true;
+    controls.autoRotate = false;
     showToast('info', 'グローバルビューに切り替えました');
   });
 
@@ -1480,7 +1499,7 @@ function bindEvents() {
   });
   controls.addEventListener('end', () => {
     clearTimeout(idleTimer);
-    idleTimer = setTimeout(() => { controls.autoRotate = true; }, 5000);
+    idleTimer = setTimeout(() => { controls.autoRotate = false; }, 5000);
   });
   // ====== FIELD DATA Event Bindings ======
 
@@ -1696,14 +1715,20 @@ async function identifySpecies(base64) {
 // ============================================================
 // FIELD DATA — Photo Upload Flow
 // ============================================================
+let _photoProcessing = false;
+
 async function handlePhotoUpload(files) {
   if (!files || files.length === 0) return;
+  if (_photoProcessing) return; // Guard: prevent double processing
+  _photoProcessing = true;
+
   const fileArr = Array.from(files).filter(f => f.type.startsWith('image/'));
-  if (fileArr.length === 0) { showToast('error', '画像ファイルを選択してください'); return; }
+  if (fileArr.length === 0) { showToast('error', '画像ファイルを選択してください'); _photoProcessing = false; return; }
 
   for (const file of fileArr) {
     await processPhoto(file);
   }
+  _photoProcessing = false;
 }
 
 async function processPhoto(file) {
