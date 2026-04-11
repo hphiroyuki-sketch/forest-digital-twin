@@ -77,11 +77,10 @@ document.addEventListener('DOMContentLoaded', () => {
 function initViewer() {
   const container = $('#globe-container');
 
-  // Optional: Cesium Ion token for 3D terrain
-  const ionToken = localStorage.getItem('forestscope-cesium-token') || '';
-  if (ionToken) {
-    Cesium.Ion.defaultAccessToken = ionToken;
-  }
+  // Cesium Ion token — default for 3D terrain (user can override in settings)
+  const DEFAULT_ION_TOKEN = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiIxMTkwOGNkMy0wMGUzLTQwZTAtOTZhOS00M2M4YWMzMjUwYzgiLCJpZCI6NDE2OTUxLCJpYXQiOjE3NzU5NTAyNDV9.xnMVNYDmvJSObdgunY9268cjULxA5D4XZmPaJ1N7AX4';
+  const ionToken = localStorage.getItem('forestscope-cesium-token') || DEFAULT_ION_TOKEN;
+  Cesium.Ion.defaultAccessToken = ionToken;
 
   // Create Viewer with ESRI World Imagery
   viewer = new Cesium.Viewer(container, {
@@ -108,10 +107,8 @@ function initViewer() {
   // Hide default Cesium credits widget (we have our own attribution)
   viewer.cesiumWidget.creditContainer.style.display = 'none';
 
-  // Enable 3D terrain if Cesium Ion token is available
-  if (ionToken) {
-    viewer.scene.setTerrain(Cesium.Terrain.fromWorldTerrain());
-  }
+  // Always enable 3D terrain (Cesium World Terrain)
+  viewer.scene.setTerrain(Cesium.Terrain.fromWorldTerrain());
 
   // Set initial camera to show Earth
   viewer.camera.setView({
