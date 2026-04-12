@@ -1162,28 +1162,29 @@ function getDeviceLocation() {
 }
 
 async function runAIAndConfirm(observation) {
-  showProcessingOverlay('AI判定中...');
+  // Note: overlay is managed by processPhoto, not here
   try {
     const result = await identifySpecies(observation.imageBase64, observation.lat, observation.lng);
     if (result) {
       observation.species = result.species;
       observation.identification = result.identification;
+      hideProcessingOverlay();
       showConfirmModal(observation);
     } else {
       observation.pendingAIIdentification = false;
+      hideProcessingOverlay();
       showManualInputModal(observation);
     }
   } catch (err) {
     console.error('AI confirm error:', err);
     observation.pendingAIIdentification = true;
-    showManualInputModal(observation);
-  } finally {
     hideProcessingOverlay();
+    showManualInputModal(observation);
   }
 }
 
 async function runAIAndAutoSave(observation) {
-  showProcessingOverlay('AI判定中...');
+  // Note: overlay is managed by processPhoto, not here
   try {
     const result = await identifySpecies(observation.imageBase64, observation.lat, observation.lng);
     if (result) {
@@ -1196,9 +1197,10 @@ async function runAIAndAutoSave(observation) {
   } catch (err) {
     console.error('AI auto-save error:', err);
     observation.pendingAIIdentification = true;
-  } finally {
-    hideProcessingOverlay();
   }
+
+  // Hide overlay BEFORE any UI updates
+  hideProcessingOverlay();
 
   // Save regardless of AI success/failure
   await saveObservation(observation);
@@ -1247,9 +1249,15 @@ function showQuickResult(observation) {
 }
 
 // ============================================================
-// FIELD DATA — Processing Overlay
+// FIELD DATA — Processing Overlay (bulletproof version)
 // ============================================================
+let _overlayProcessId = 0;
+let _overlayAutoTimeout = null;
+
 function showProcessingOverlay(text) {
+  _overlayProcessId++;
+  const myId = _overlayProcessId;
+  
   let ol = document.querySelector('.fd-processing-overlay');
   if (!ol) {
     ol = document.createElement('div');
@@ -1259,11 +1267,32 @@ function showProcessingOverlay(text) {
   }
   ol.querySelector('.fd-processing-text').textContent = text || '処理中...';
   ol.classList.remove('hidden');
+  ol.dataset.processId = myId;
+  
+  // Safety: auto-dismiss after 35 seconds no matter what
+  if (_overlayAutoTimeout) clearTimeout(_overlayAutoTimeout);
+  _overlayAutoTimeout = setTimeout(() => {
+    console.warn('[Overlay] Auto-dismissed after 35s safety timeout');
+    hideProcessingOverlay();
+  }, 35000);
+  
+  // Allow user to tap overlay to dismiss (after 5s)
+  setTimeout(() => {
+    if (ol.dataset.processId == myId && !ol.classList.contains('hidden')) {
+      ol.style.cursor = 'pointer';
+      ol.onclick = () => {
+        console.log('[Overlay] User dismissed overlay');
+        hideProcessingOverlay();
+        showToast('info', 'AI判定をバックグラウンドで継続中...');
+      };
+    }
+  }, 5000);
 }
 
 function hideProcessingOverlay() {
+  if (_overlayAutoTimeout) { clearTimeout(_overlayAutoTimeout); _overlayAutoTimeout = null; }
   const ol = document.querySelector('.fd-processing-overlay');
-  if (ol) ol.classList.add('hidden');
+  if (ol) { ol.classList.add('hidden'); ol.onclick = null; ol.style.cursor = ''; }
 }
 
 // ============================================================
@@ -1365,16 +1394,22 @@ function showObservationPopup(obs) {
   body.querySelector('#fd-popup-reidentify')?.addEventListener('click', async () => {
     $('#observation-popup').classList.add('hidden');
     showProcessingOverlay('再判定中...');
-    const result = await identifySpecies(obs.imageBase64, obs.lat, obs.lng);
-    hideProcessingOverlay();
-    if (result) {
-      obs.species = result.species;
-      obs.identification = result.identification;
-      obs.pendingAIIdentification = false;
-      await updateObservation(obs.id, obs);
-      showToast('success', '再判定が完了しました');
-    } else {
-      showToast('warning', '再判定に失敗しました');
+    try {
+      const result = await identifySpecies(obs.imageBase64, obs.lat, obs.lng);
+      if (result) {
+        obs.species = result.species;
+        obs.identification = result.identification;
+        obs.pendingAIIdentification = false;
+        await updateObservation(obs.id, obs);
+        showToast('success', '再判定が完了しました');
+      } else {
+        showToast('warning', '再判定に失敗しました');
+      }
+    } catch (e) {
+      console.error('Re-identify error:', e);
+      showToast('error', '再判定中にエラーが発生しました');
+    } finally {
+      hideProcessingOverlay();
     }
     showObservationPopup(obs);
   });
