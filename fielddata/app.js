@@ -582,6 +582,14 @@ async function base64ToBlob(base64) {
   return fetch(base64).then(r => r.blob());
 }
 
+// Utility: fetch with timeout (AbortController)
+function fetchWithTimeout(url, options = {}, timeoutMs = 15000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(url, { ...options, signal: controller.signal })
+    .finally(() => clearTimeout(timer));
+}
+
 // Throttle helper
 async function throttleApi(apiName) {
   const limit = API_LIMITS[apiName];
@@ -635,7 +643,7 @@ async function identifyWithPlantNet(base64, organs = 'auto') {
     formData.append('images', blob, 'photo.jpg');
     formData.append('organs', organs);
     const url = `https://my-api.plantnet.org/v2/identify/all?api-key=${key}&include-related-images=false&no-reject=false&lang=ja`;
-    const resp = await fetch(url, { method: 'POST', body: formData });
+    const resp = await fetchWithTimeout(url, { method: 'POST', body: formData }, 20000);
     if (resp.status === 429) { const err = new Error('RATE_LIMITED'); err.status = 429; throw err; }
     if (!resp.ok) throw new Error(`PlantNet API error: ${resp.status}`);
     incrementPlantNetDailyCount();
@@ -670,9 +678,9 @@ async function _rawINaturalistIdentify(base64, lat, lng) {
     formData.append('image', blob, 'photo.jpg');
     if (lat) formData.append('lat', String(lat));
     if (lng) formData.append('lng', String(lng));
-    const resp = await fetch('https://api.inaturalist.org/v1/computervision/score_image', {
+    const resp = await fetchWithTimeout('https://api.inaturalist.org/v1/computervision/score_image', {
       method: 'POST', body: formData
-    });
+    }, 20000);
     if (!resp.ok) throw new Error(`iNaturalist error: ${resp.status}`);
     const data = await resp.json();
     if (!data.results || data.results.length === 0) return null;
@@ -767,7 +775,7 @@ async function enrichWithGBIF(scientificName) {
   await throttleApi('gbif');
   try {
     const url = `https://api.gbif.org/v1/species/match?name=${encodeURIComponent(scientificName)}&strict=false`;
-    const resp = await fetch(url);
+    const resp = await fetchWithTimeout(url, {}, 10000);
     if (!resp.ok) return null;
     const data = await resp.json();
     const result = {
@@ -786,7 +794,7 @@ async function enrichWithGBIF(scientificName) {
     // Try to get IUCN status
     if (result.gbifTaxonKey) {
       try {
-        const iucnResp = await fetch(`https://api.gbif.org/v1/species/${result.gbifTaxonKey}/iucnRedListCategory`);
+        const iucnResp = await fetchWithTimeout(`https://api.gbif.org/v1/species/${result.gbifTaxonKey}/iucnRedListCategory`, {}, 8000);
         if (iucnResp.ok) {
           const iucnData = await iucnResp.json();
           result.iucnStatus = iucnData.category || null;
@@ -813,7 +821,7 @@ async function enrichWithWikipedia(scientificName) {
 
     // English Wikipedia summary
     try {
-      const enResp = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(scientificName)}`);
+      const enResp = await fetchWithTimeout(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(scientificName)}`, {}, 8000);
       if (enResp.ok) {
         const enData = await enResp.json();
         result.description = enData.extract || null;
@@ -825,7 +833,7 @@ async function enrichWithWikipedia(scientificName) {
     // Wikidata for Japanese name (try multiple approaches)
     try {
       // Approach 1: Direct Wikidata lookup by enwiki title
-      const wdResp = await fetch(`https://www.wikidata.org/w/api.php?action=wbgetentities&sites=enwiki&titles=${encodeURIComponent(scientificName)}&languages=ja&props=labels|sitelinks&format=json&origin=*`);
+      const wdResp = await fetchWithTimeout(`https://www.wikidata.org/w/api.php?action=wbgetentities&sites=enwiki&titles=${encodeURIComponent(scientificName)}&languages=ja&props=labels|sitelinks&format=json&origin=*`, {}, 8000);
       if (wdResp.ok) {
         const wdData = await wdResp.json();
         const entities = wdData.entities || {};
@@ -848,7 +856,7 @@ async function enrichWithWikipedia(scientificName) {
     // Approach 2: If still no Japanese name, try Japanese Wikipedia search directly
     if (!result.japaneseName) {
       try {
-        const jaResp = await fetch(`https://ja.wikipedia.org/w/api.php?action=opensearch&search=${encodeURIComponent(scientificName)}&limit=1&namespace=0&format=json&origin=*`);
+        const jaResp = await fetchWithTimeout(`https://ja.wikipedia.org/w/api.php?action=opensearch&search=${encodeURIComponent(scientificName)}&limit=1&namespace=0&format=json&origin=*`, {}, 8000);
         if (jaResp.ok) {
           const jaData = await jaResp.json();
           if (jaData[1] && jaData[1].length > 0) {
@@ -864,7 +872,7 @@ async function enrichWithWikipedia(scientificName) {
       const genus = scientificName.split(' ')[0];
       try {
         // Try Wikidata with genus name
-        const wdGenusResp = await fetch(`https://www.wikidata.org/w/api.php?action=wbgetentities&sites=enwiki&titles=${encodeURIComponent(genus)}&languages=ja&props=labels|sitelinks&format=json&origin=*`);
+        const wdGenusResp = await fetchWithTimeout(`https://www.wikidata.org/w/api.php?action=wbgetentities&sites=enwiki&titles=${encodeURIComponent(genus)}&languages=ja&props=labels|sitelinks&format=json&origin=*`, {}, 8000);
         if (wdGenusResp.ok) {
           const wdGenusData = await wdGenusResp.json();
           const genusEntity = Object.values(wdGenusData.entities || {})[0];
@@ -880,7 +888,7 @@ async function enrichWithWikipedia(scientificName) {
       // Also try ja.wikipedia search with genus
       if (!result.japaneseName) {
         try {
-          const jaGenusResp = await fetch(`https://ja.wikipedia.org/w/api.php?action=opensearch&search=${encodeURIComponent(genus)}&limit=1&namespace=0&format=json&origin=*`);
+          const jaGenusResp = await fetchWithTimeout(`https://ja.wikipedia.org/w/api.php?action=opensearch&search=${encodeURIComponent(genus)}&limit=1&namespace=0&format=json&origin=*`, {}, 8000);
           if (jaGenusResp.ok) {
             const jaGenusData = await jaGenusResp.json();
             if (jaGenusData[1] && jaGenusData[1].length > 0) {
@@ -1036,7 +1044,18 @@ async function runIdentificationPipeline(imageBase64, lat, lng) {
 
 // Legacy wrapper — called by existing code
 async function identifySpecies(base64, lat, lng) {
-  return runIdentificationPipeline(base64, lat, lng);
+  // Global 60-second timeout to prevent infinite hangs
+  const PIPELINE_TIMEOUT_MS = 60000;
+  try {
+    const result = await Promise.race([
+      runIdentificationPipeline(base64, lat, lng),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('PIPELINE_TIMEOUT')), PIPELINE_TIMEOUT_MS))
+    ]);
+    return result;
+  } catch (err) {
+    console.error('[Pipeline] Global timeout or fatal error:', err.message);
+    return null;
+  }
 }
 
 // ============================================================
