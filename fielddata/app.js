@@ -536,9 +536,14 @@ async function updateObservation(id, updates) {
 
 // Default API keys (built-in)
 const DEFAULT_PLANTNET_KEY = '2b10VmN9DMVabEoiGlusHXve';
+const DEFAULT_INAT_JWT = 'eyJhbGciOiJIUzUxMiJ9.eyJ1c2VyX2lkIjoxMDMzNTc2OCwiZXhwIjoxNzc2MDU4MjA4fQ.nWr2NW_lGmCVT0fK1kff_lIq3FV1BZEPUTCNHen4SyigJEz-WrfP8JKUYQ3odu9ba7LoEoXm3hmCih8a75cUxg';
 
 function getPlantNetKey() {
   return localStorage.getItem('forestscope-plantnet-key') || DEFAULT_PLANTNET_KEY;
+}
+
+function getINatToken() {
+  return localStorage.getItem('forestscope-inat-token') || DEFAULT_INAT_JWT;
 }
 
 // API rate limiting & tracking
@@ -685,8 +690,11 @@ async function _rawINaturalistIdentify(base64, lat, lng) {
     formData.append('image', blob, 'photo.jpg');
     if (lat) formData.append('lat', String(lat));
     if (lng) formData.append('lng', String(lng));
+    const headers = {};
+    const jwt = getINatToken();
+    if (jwt) headers['Authorization'] = `JWT ${jwt}`;
     const resp = await fetchWithTimeout('https://api.inaturalist.org/v1/computervision/score_image', {
-      method: 'POST', body: formData
+      method: 'POST', body: formData, headers
     }, 20000);
     if (resp.status === 401 || resp.status === 403) {
       console.warn(`[Pipeline] iNaturalist auth error: ${resp.status} - CV API may require authentication`);
@@ -1709,6 +1717,7 @@ function renderBsheetRegions(container) {
 
 function renderBsheetSettings(container) {
   const plantNetKey = localStorage.getItem('forestscope-plantnet-key') || DEFAULT_PLANTNET_KEY;
+  const inatToken = localStorage.getItem('forestscope-inat-token') || DEFAULT_INAT_JWT;
   const useINat = localStorage.getItem('forestscope-use-inaturalist') !== 'false';
   const cesiumToken = localStorage.getItem('forestscope-cesium-token') || '';
 
@@ -1727,7 +1736,9 @@ function renderBsheetSettings(container) {
     <div class="bsheet-section">
       <div class="bsheet-section-title">AI 判定エンジン</div>
       <div class="fd-form-group"><label>Pl@ntNet API キー</label><input type="password" id="bsheet-plantnet-key" value="${plantNetKey}" placeholder="APIキーを入力..."></div>
-      <div class="fd-settings-hint" style="margin-bottom:12px;"><a href="https://my.plantnet.org/" target="_blank" rel="noopener">my.plantnet.org</a> で取得</div>
+      <div class="fd-settings-hint" style="margin-bottom:8px;"><a href="https://my.plantnet.org/" target="_blank" rel="noopener">my.plantnet.org</a> で取得</div>
+      <div class="fd-form-group"><label>iNaturalist API トークン</label><input type="password" id="bsheet-inat-token" value="${inatToken}" placeholder="JWTトークンを入力..."></div>
+      <div class="fd-settings-hint" style="margin-bottom:8px;"><a href="https://www.inaturalist.org/users/api_token" target="_blank" rel="noopener">inaturalist.org/users/api_token</a> で取得（24時間で期限切れ）</div>
       <div class="fd-toggle-row"><label>iNaturalist を使用</label><div class="fd-toggle"><input type="checkbox" id="bsheet-inat" ${useINat ? 'checked' : ''}><span class="fd-toggle-slider"></span></div></div>
     </div>
     <div class="bsheet-section">
@@ -1745,6 +1756,7 @@ function renderBsheetSettings(container) {
 
   container.querySelector('#bsheet-save-settings').addEventListener('click', () => {
     localStorage.setItem('forestscope-plantnet-key', container.querySelector('#bsheet-plantnet-key').value.trim());
+    localStorage.setItem('forestscope-inat-token', container.querySelector('#bsheet-inat-token').value.trim());
     localStorage.setItem('forestscope-use-inaturalist', container.querySelector('#bsheet-inat').checked ? 'true' : 'false');
     const newToken = container.querySelector('#bsheet-cesium-token').value.trim();
     const oldToken = localStorage.getItem('forestscope-cesium-token') || '';
