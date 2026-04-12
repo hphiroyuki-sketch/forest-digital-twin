@@ -433,6 +433,66 @@
     </button>
   </div>
 
+  <!-- ===== BATCH IMPORT MODAL ===== -->
+  <div id="batch-import-modal" class="modal-overlay hidden">
+    <div class="modal-container batch-modal-container">
+      <div class="modal-header">
+        <h2><span class="material-icons" style="color: var(--forest-primary);">inventory_2</span> 一括インポート</h2>
+        <button class="batch-close icon-btn"><span class="material-icons">close</span></button>
+      </div>
+      <div class="modal-body" id="batch-modal-body">
+        <div class="batch-summary" id="batch-summary">
+          <span class="material-icons batch-summary-icon">photo_library</span>
+          <span id="batch-total-text">0枚の画像を処理します</span>
+        </div>
+        <div class="batch-progress-wrap">
+          <div class="batch-progress-bar"><div class="batch-progress-fill" id="batch-progress-fill"></div></div>
+          <div class="batch-progress-pct" id="batch-progress-pct">0%</div>
+        </div>
+        <div class="batch-counters" id="batch-counters">
+          <div class="batch-counter"><span class="batch-counter-icon">⏳</span><span id="bc-waiting">0</span><span class="batch-counter-label">待機</span></div>
+          <div class="batch-counter"><span class="batch-counter-icon">🔄</span><span id="bc-processing">0</span><span class="batch-counter-label">処理中</span></div>
+          <div class="batch-counter"><span class="batch-counter-icon">✅</span><span id="bc-success">0</span><span class="batch-counter-label">成功</span></div>
+          <div class="batch-counter"><span class="batch-counter-icon">⚠️</span><span id="bc-nogps">0</span><span class="batch-counter-label">GPS無</span></div>
+          <div class="batch-counter"><span class="batch-counter-icon">❌</span><span id="bc-failed">0</span><span class="batch-counter-label">失敗</span></div>
+        </div>
+        <div class="batch-current" id="batch-current-file">準備中...</div>
+        <div class="batch-actions">
+          <button class="secondary-btn" id="batch-pause-btn"><span class="material-icons">pause</span> 一時停止</button>
+          <button class="secondary-btn fd-danger-btn" id="batch-cancel-btn"><span class="material-icons">stop</span> 中止</button>
+        </div>
+        <div class="batch-result hidden" id="batch-result">
+          <div class="batch-result-title">処理完了</div>
+          <div class="batch-result-stats" id="batch-result-stats"></div>
+          <div class="batch-result-actions">
+            <button class="primary-btn" id="batch-gps-fix-btn" style="background:var(--forest-primary);display:none;">
+              <span class="material-icons">edit_location_alt</span> GPS無し画像を配置する
+            </button>
+            <button class="secondary-btn" id="batch-done-btn"><span class="material-icons">check</span> 閉じる</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== GPS FIX MODE ===== -->
+  <div id="gps-fix-bar" class="gps-fix-bar hidden">
+    <div class="gps-fix-preview">
+      <img id="gps-fix-thumb" src="" alt="">
+      <div class="gps-fix-info">
+        <div id="gps-fix-filename">—</div>
+        <div id="gps-fix-counter">0 / 0</div>
+      </div>
+    </div>
+    <div class="gps-fix-actions">
+      <button class="secondary-btn" id="gps-fix-skip"><span class="material-icons">skip_next</span> スキップ</button>
+      <button class="secondary-btn fd-danger-btn" id="gps-fix-stop"><span class="material-icons">close</span> 終了</button>
+    </div>
+  </div>
+
+  <!-- Batch file input (hidden) -->
+  <input type="file" id="batch-input" accept="image/*" multiple hidden>
+
   <!-- ===== PREVIEW BAR (Bottom) ===== -->
   <div id="preview-bar" class="hidden">
     <div class="preview-info">

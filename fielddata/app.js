@@ -1013,6 +1013,7 @@ function renderBsheetCamera(container) {
   container.innerHTML = `
     <div class="bsheet-title"><span class="material-icons">photo_camera</span> 撮影 & データ追加</div>
     <button class="bsheet-camera-btn" id="bsheet-photo-btn"><span class="material-icons">add_a_photo</span> 📸 写真を撮影 / 選択</button>
+    <button class="bsheet-batch-btn" id="bsheet-batch-btn"><span class="material-icons">inventory_2</span> 📦 一括インポート（数百枚対応）</button>
     <div class="upload-dropzone fd-dropzone" id="bsheet-dropzone">
       <span class="material-icons upload-icon">add_photo_alternate</span>
       <p>写真をドラッグ＆ドロップ</p><span class="upload-hint">JPG, PNG に対応 · GPS付き写真推奨</span>
@@ -1023,6 +1024,7 @@ function renderBsheetCamera(container) {
     </div>
   `;
   container.querySelector('#bsheet-photo-btn').addEventListener('click', () => { $('#photo-input').click(); });
+  container.querySelector('#bsheet-batch-btn').addEventListener('click', () => { closeBsheet(); $('#batch-input').click(); });
   const dz = container.querySelector('#bsheet-dropzone');
   dz.addEventListener('click', () => { $('#photo-input').click(); });
   dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('dragover'); });
@@ -1168,8 +1170,574 @@ function renderBsheetSettings(container) {
     await clearAllObservations();
     viewer.entities.removeAll();
     observationEntities = [];
+    clusterEntities = [];
     state.observations = [];
     showToast('info', 'すべてのデータを削除しました');
     closeBsheet();
   });
 }
+
+// ============================================================
+// BATCH IMPORT ENGINE
+// ============================================================
+const CONCURRENCY_LIMIT = 3;
+const PLANTNET_RATE_LIMIT_MS = 1500;
+let batchState = {
+  running: false, paused: false, cancelled: false,
+  total: 0, waiting: 0, processing: 0, success: 0, nogps: 0, failed: 0,
+  noGpsQueue: [], // observations without GPS for later fix
+  lastApiCall: 0,
+};
+
+function resetBatchState(total) {
+  batchState = {
+    running: true, paused: false, cancelled: false,
+    total, waiting: total, processing: 0, success: 0, nogps: 0, failed: 0,
+    noGpsQueue: [], lastApiCall: 0,
+  };
+}
+
+function updateBatchUI() {
+  const b = batchState;
+  const done = b.success + b.nogps + b.failed;
+  const pct = b.total > 0 ? Math.round((done / b.total) * 100) : 0;
+  const fill = $('#batch-progress-fill'); if (fill) fill.style.width = pct + '%';
+  const pctEl = $('#batch-progress-pct'); if (pctEl) pctEl.textContent = pct + '%';
+  const w = $('#bc-waiting'); if (w) w.textContent = b.waiting;
+  const p = $('#bc-processing'); if (p) p.textContent = b.processing;
+  const s = $('#bc-success'); if (s) s.textContent = b.success;
+  const n = $('#bc-nogps'); if (n) n.textContent = b.nogps;
+  const f = $('#bc-failed'); if (f) f.textContent = b.failed;
+}
+
+function setBatchCurrentFile(name) {
+  const el = $('#batch-current-file');
+  if (el) el.textContent = name;
+}
+
+// Throttled API call — ensures minimum interval between Pl@ntNet calls
+async function throttledIdentify(base64) {
+  const now = Date.now();
+  const wait = PLANTNET_RATE_LIMIT_MS - (now - batchState.lastApiCall);
+  if (wait > 0) await new Promise(r => setTimeout(r, wait));
+  batchState.lastApiCall = Date.now();
+  return identifySpecies(base64);
+}
+
+// Process a single image in the batch
+async function processBatchItem(file, retryCount = 0) {
+  if (batchState.cancelled) return;
+  while (batchState.paused) {
+    await new Promise(r => setTimeout(r, 500));
+    if (batchState.cancelled) return;
+  }
+
+  batchState.waiting--;
+  batchState.processing++;
+  updateBatchUI();
+  setBatchCurrentFile(file.name);
+
+  try {
+    const imageBase64 = await resizeImage(file);
+    let lat = null, lng = null, capturedAt = null;
+
+    // EXIF extraction
+    try {
+      const gps = await exifr.gps(file);
+      if (gps && gps.latitude && gps.longitude) { lat = gps.latitude; lng = gps.longitude; }
+      const exifData = await exifr.parse(file, ['DateTimeOriginal', 'CreateDate']);
+      if (exifData) {
+        capturedAt = exifData.DateTimeOriginal || exifData.CreateDate || null;
+        if (capturedAt instanceof Date) capturedAt = capturedAt.toISOString();
+      }
+    } catch (e) { /* EXIF failed, continue */ }
+
+    if (!capturedAt) capturedAt = new Date().toISOString();
+
+    const observation = {
+      id: generateId(), imageBase64, lat, lng, capturedAt,
+      createdAt: new Date().toISOString(), species: [], userNote: '',
+      locationName: file.name, pendingAIIdentification: false,
+    };
+
+    // AI identification with retry for 429
+    try {
+      const result = await throttledIdentify(imageBase64);
+      if (result) { observation.species = result.species; }
+      else { observation.pendingAIIdentification = !navigator.onLine; }
+    } catch (apiErr) {
+      if (apiErr?.status === 429 && retryCount < 3) {
+        batchState.processing--;
+        batchState.waiting++;
+        updateBatchUI();
+        await new Promise(r => setTimeout(r, 5000));
+        return processBatchItem(file, retryCount + 1);
+      }
+      observation.pendingAIIdentification = true;
+    }
+
+    // Save to IndexedDB
+    await saveObservation(observation);
+    state.observations.push(observation);
+
+    if (lat !== null && lng !== null) {
+      addObservationMarker(observation);
+      batchState.success++;
+    } else {
+      batchState.nogps++;
+      batchState.noGpsQueue.push(observation);
+    }
+  } catch (err) {
+    console.error('Batch item failed:', file.name, err);
+    batchState.failed++;
+  } finally {
+    batchState.processing--;
+    updateBatchUI();
+  }
+}
+
+// Main batch processor with semaphore
+async function processBatchImport(files) {
+  const fileArr = Array.from(files).filter(f => f.type.startsWith('image/'));
+  if (fileArr.length === 0) { showToast('error', '画像ファイルが選択されていません'); return; }
+
+  resetBatchState(fileArr.length);
+
+  // Show modal
+  const modal = $('#batch-import-modal');
+  const totalText = $('#batch-total-text');
+  const resultDiv = $('#batch-result');
+  const actionsDiv = modal.querySelector('.batch-actions');
+  if (totalText) totalText.textContent = `${fileArr.length}枚の画像を処理します`;
+  if (resultDiv) resultDiv.classList.add('hidden');
+  if (actionsDiv) actionsDiv.style.display = '';
+  modal.classList.remove('hidden');
+  updateBatchUI();
+
+  // Bind pause/cancel
+  const pauseBtn = $('#batch-pause-btn');
+  const cancelBtn = $('#batch-cancel-btn');
+  pauseBtn.onclick = () => {
+    batchState.paused = !batchState.paused;
+    pauseBtn.innerHTML = batchState.paused
+      ? '<span class="material-icons">play_arrow</span> 再開'
+      : '<span class="material-icons">pause</span> 一時停止';
+  };
+  cancelBtn.onclick = () => {
+    batchState.cancelled = true;
+    batchState.running = false;
+    showBatchResult();
+  };
+
+  // Semaphore-based parallel processing
+  let idx = 0;
+  const workers = [];
+  for (let w = 0; w < CONCURRENCY_LIMIT; w++) {
+    workers.push((async () => {
+      while (idx < fileArr.length && !batchState.cancelled) {
+        const i = idx++;
+        await processBatchItem(fileArr[i]);
+      }
+    })());
+  }
+  await Promise.all(workers);
+  batchState.running = false;
+  showBatchResult();
+  renderFieldDataPanel();
+  updateClustering();
+}
+
+function showBatchResult() {
+  const b = batchState;
+  const actionsDiv = document.querySelector('#batch-import-modal .batch-actions');
+  if (actionsDiv) actionsDiv.style.display = 'none';
+
+  const resultDiv = $('#batch-result');
+  const statsDiv = $('#batch-result-stats');
+  if (statsDiv) {
+    statsDiv.innerHTML = `
+      <div class="batch-result-row">✅ 成功: <strong>${b.success}</strong>枚</div>
+      <div class="batch-result-row">⚠️ GPS無し: <strong>${b.nogps}</strong>枚</div>
+      <div class="batch-result-row">❌ 失敗: <strong>${b.failed}</strong>枚</div>
+      ${b.cancelled ? '<div class="batch-result-row" style="color:var(--gm-red);">⏹ 処理が中断されました</div>' : ''}
+    `;
+  }
+  if (resultDiv) resultDiv.classList.remove('hidden');
+
+  // GPS fix button
+  const gpsBtn = $('#batch-gps-fix-btn');
+  if (gpsBtn) {
+    if (b.noGpsQueue.length > 0) {
+      gpsBtn.style.display = '';
+      gpsBtn.onclick = () => { $('#batch-import-modal').classList.add('hidden'); startGpsFixMode(b.noGpsQueue); };
+    } else {
+      gpsBtn.style.display = 'none';
+    }
+  }
+  const doneBtn = $('#batch-done-btn');
+  if (doneBtn) doneBtn.onclick = () => { $('#batch-import-modal').classList.add('hidden'); };
+
+  setBatchCurrentFile(b.cancelled ? '中断されました' : '処理完了');
+}
+
+// ============================================================
+// GPS FIX MODE
+// ============================================================
+let gpsFixQueue = [];
+let gpsFixIndex = 0;
+
+function startGpsFixMode(queue) {
+  gpsFixQueue = queue;
+  gpsFixIndex = 0;
+  showGpsFixItem();
+}
+
+function showGpsFixItem() {
+  if (gpsFixIndex >= gpsFixQueue.length) {
+    endGpsFixMode();
+    return;
+  }
+  const obs = gpsFixQueue[gpsFixIndex];
+  const bar = $('#gps-fix-bar');
+  const thumb = $('#gps-fix-thumb');
+  const fname = $('#gps-fix-filename');
+  const counter = $('#gps-fix-counter');
+  if (bar) bar.classList.remove('hidden');
+  if (thumb) thumb.src = obs.imageBase64;
+  if (fname) fname.textContent = obs.locationName || obs.id;
+  if (counter) counter.textContent = `${gpsFixIndex + 1} / ${gpsFixQueue.length}`;
+
+  // Enter location picker mode for this observation
+  state.locationPickerActive = true;
+  state.pendingLocationObservation = obs;
+  state._gpsFixMode = true;
+  showToast('info', '地球上をタップして撮影地点を指定');
+}
+
+function gpsFixNext() {
+  gpsFixIndex++;
+  showGpsFixItem();
+}
+
+function endGpsFixMode() {
+  const bar = $('#gps-fix-bar');
+  if (bar) bar.classList.add('hidden');
+  state.locationPickerActive = false;
+  state.pendingLocationObservation = null;
+  state._gpsFixMode = false;
+  gpsFixQueue = [];
+  gpsFixIndex = 0;
+  showToast('success', 'GPS配置モードを終了しました');
+  updateClustering();
+}
+
+// ============================================================
+// MARKER CLUSTERING
+// ============================================================
+let clusterEntities = [];
+const CLUSTER_DISTANCE_THRESHOLD = 0.05; // ~5km at equator
+
+function updateClustering() {
+  // Remove old clusters
+  for (const ce of clusterEntities) {
+    viewer.entities.remove(ce);
+  }
+  clusterEntities = [];
+
+  const validObs = state.observations.filter(o => o.lat !== null && o.lng !== null);
+  if (validObs.length < 10) {
+    // Too few — show all markers normally
+    for (const oe of observationEntities) {
+      if (oe.entity) oe.entity.show = true;
+    }
+    return;
+  }
+
+  // Get camera height to determine cluster level
+  const camHeight = viewer.camera.positionCartographic.height;
+
+  // Don't cluster when zoomed in close
+  if (camHeight < 50000) {
+    for (const oe of observationEntities) {
+      if (oe.entity) oe.entity.show = true;
+    }
+    return;
+  }
+
+  // Build clusters using simple grid
+  const gridSize = camHeight > 5000000 ? 5 : camHeight > 1000000 ? 2 : camHeight > 200000 ? 0.5 : CLUSTER_DISTANCE_THRESHOLD;
+  const clusters = new Map();
+
+  for (const obs of validObs) {
+    const gx = Math.floor(obs.lat / gridSize);
+    const gy = Math.floor(obs.lng / gridSize);
+    const key = `${gx}_${gy}`;
+    if (!clusters.has(key)) clusters.set(key, []);
+    clusters.get(key).push(obs);
+  }
+
+  // Hide individual markers that are in clusters
+  const clusteredIds = new Set();
+  for (const [, group] of clusters) {
+    if (group.length < 2) continue;
+    for (const obs of group) clusteredIds.add(obs.id);
+  }
+
+  for (const oe of observationEntities) {
+    if (oe.entity) oe.entity.show = !clusteredIds.has(oe.id);
+  }
+
+  // Create cluster entities
+  for (const [, group] of clusters) {
+    if (group.length < 2) continue;
+    const avgLat = group.reduce((s, o) => s + o.lat, 0) / group.length;
+    const avgLng = group.reduce((s, o) => s + o.lng, 0) / group.length;
+
+    const clusterCanvas = createClusterCanvas(group.length);
+    const entity = viewer.entities.add({
+      position: Cesium.Cartesian3.fromDegrees(avgLng, avgLat, 100),
+      billboard: {
+        image: clusterCanvas,
+        verticalOrigin: Cesium.VerticalOrigin.CENTER,
+        scale: 0.6,
+        heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+        disableDepthTestDistance: Number.POSITIVE_INFINITY,
+      },
+      properties: { isCluster: true, clusterLat: avgLat, clusterLng: avgLng, clusterIds: group.map(o => o.id) },
+    });
+    clusterEntities.push(entity);
+  }
+}
+
+function createClusterCanvas(count) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 80; canvas.height = 80;
+  const ctx = canvas.getContext('2d');
+
+  // Circle background
+  ctx.beginPath();
+  ctx.arc(40, 40, 32, 0, Math.PI * 2);
+  const grad = ctx.createRadialGradient(40, 40, 10, 40, 40, 32);
+  grad.addColorStop(0, '#43a047');
+  grad.addColorStop(1, '#1b5e20');
+  ctx.fillStyle = grad;
+  ctx.fill();
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 3;
+  ctx.stroke();
+
+  // Count text
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 18px Google Sans, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('📷' + count, 40, 40);
+
+  return canvas;
+}
+
+// Update clustering on camera move
+function setupClusteringListener() {
+  if (!viewer) return;
+  let clusterTimer;
+  viewer.camera.changed.addEventListener(() => {
+    clearTimeout(clusterTimer);
+    clusterTimer = setTimeout(() => { updateClustering(); }, 300);
+  });
+}
+
+// ============================================================
+// CAROUSEL POPUP (Multiple observations at same location)
+// ============================================================
+function showObservationPopupCarousel(obsIds) {
+  const observations = obsIds.map(id => state.observations.find(o => o.id === id)).filter(Boolean);
+  if (observations.length === 0) return;
+  if (observations.length === 1) { showObservationPopup(observations[0]); return; }
+
+  let currentIdx = 0;
+  const body = $('#fd-popup-body');
+
+  function renderSlide(idx) {
+    const obs = observations[idx];
+    const species = obs.species || [];
+    const speciesHtml = species.length > 0
+      ? species.map(s => `
+        <div class="fd-popup-species">
+          <span class="material-icons" style="color: var(--forest-accent);">${CATEGORY_ICONS[s.category] || 'eco'}</span>
+          <div><strong>${s.name}</strong>
+          <div style="font-size:11px; color:var(--gm-text-tertiary);">${s.scientificName || ''} · ${Math.round((s.confidence || 0) * 100)}% · ${s.source || ''}</div></div>
+        </div>`).join('')
+      : '<p style="color:var(--gm-text-tertiary);">種情報なし</p>';
+
+    body.innerHTML = `
+      <div class="carousel-nav">
+        <button class="carousel-prev ${idx === 0 ? 'disabled' : ''}" id="carousel-prev"><span class="material-icons">chevron_left</span></button>
+        <span class="carousel-counter">${idx + 1} / ${observations.length}</span>
+        <button class="carousel-next ${idx === observations.length - 1 ? 'disabled' : ''}" id="carousel-next"><span class="material-icons">chevron_right</span></button>
+      </div>
+      <div class="fd-popup-img"><img src="${obs.imageBase64}" alt="observation photo"></div>
+      <div class="fd-popup-details">
+        <div class="fd-popup-section-title">種同定</div>
+        ${speciesHtml}
+        <div class="fd-popup-section-title" style="margin-top:12px;">位置情報</div>
+        <p>緯度: ${obs.lat?.toFixed(6) || '不明'} / 経度: ${obs.lng?.toFixed(6) || '不明'}</p>
+        <p>撮影日時: ${formatDateTime(obs.capturedAt)}</p>
+      </div>
+      <div class="fd-popup-actions">
+        <button class="secondary-btn fd-danger-btn" id="fd-popup-delete"><span class="material-icons">delete</span> 削除</button>
+      </div>
+    `;
+
+    body.querySelector('#carousel-prev')?.addEventListener('click', () => { if (idx > 0) { currentIdx--; renderSlide(currentIdx); } });
+    body.querySelector('#carousel-next')?.addEventListener('click', () => { if (idx < observations.length - 1) { currentIdx++; renderSlide(currentIdx); } });
+    body.querySelector('#fd-popup-delete')?.addEventListener('click', async () => {
+      const obs = observations[currentIdx];
+      await deleteObservation(obs.id);
+      state.observations = state.observations.filter(o => o.id !== obs.id);
+      const ent = observationEntities.find(e => e.id === obs.id);
+      if (ent) { viewer.entities.remove(ent.entity); observationEntities = observationEntities.filter(e => e.id !== obs.id); }
+      observations.splice(currentIdx, 1);
+      if (observations.length === 0) { $('#observation-popup').classList.add('hidden'); }
+      else { currentIdx = Math.min(currentIdx, observations.length - 1); renderSlide(currentIdx); }
+      renderFieldDataPanel();
+      updateClustering();
+    });
+  }
+
+  renderSlide(0);
+  $('#observation-popup').classList.remove('hidden');
+}
+
+// ============================================================
+// ENHANCED GLOBE CLICK — cluster + carousel support
+// ============================================================
+// Override the original handleGlobeClick to support clusters
+const _origHandleGlobeClick = typeof handleGlobeClick === 'function' ? handleGlobeClick : null;
+
+// We re-assign handleGlobeClick below to add cluster support
+(function patchGlobeClick() {
+  const origFn = handleGlobeClick;
+  window._handleGlobeClickPatched = function(screenPos) {
+    const picked = viewer.scene.pick(screenPos);
+
+    // Cluster click → zoom in
+    if (picked && picked.id && picked.id.properties && picked.id.properties.isCluster) {
+      const clusterLat = picked.id.properties.clusterLat.getValue();
+      const clusterLng = picked.id.properties.clusterLng.getValue();
+      const ids = picked.id.properties.clusterIds.getValue();
+      const camHeight = viewer.camera.positionCartographic.height;
+      if (camHeight < 100000) {
+        // Already zoomed — show carousel
+        showObservationPopupCarousel(ids);
+      } else {
+        // Zoom in to cluster
+        flyTo(clusterLat, clusterLng, Math.max(camHeight / 4, 1000));
+      }
+      return;
+    }
+
+    // Normal observation click
+    if (picked && picked.id && picked.id.properties && picked.id.properties.obsId) {
+      const obsId = picked.id.properties.obsId.getValue();
+      const obs = state.observations.find(o => o.id === obsId);
+      if (obs) {
+        // Check for nearby observations (within ~10m)
+        const nearby = state.observations.filter(o =>
+          o.id !== obs.id && o.lat !== null && o.lng !== null &&
+          Math.abs(o.lat - obs.lat) < 0.0001 && Math.abs(o.lng - obs.lng) < 0.0001
+        );
+        if (nearby.length > 0) {
+          showObservationPopupCarousel([obs.id, ...nearby.map(n => n.id)]);
+        } else {
+          showObservationPopup(obs);
+        }
+        return;
+      }
+    }
+
+    // Location picker (GPS fix mode support)
+    if (state.locationPickerActive && state.pendingLocationObservation) {
+      const ray = viewer.camera.getPickRay(screenPos);
+      const cartesian = viewer.scene.globe.pick(ray, viewer.scene);
+      if (cartesian) {
+        const carto = Cesium.Cartographic.fromCartesian(cartesian);
+        const lat = Cesium.Math.toDegrees(carto.latitude);
+        const lng = Cesium.Math.toDegrees(carto.longitude);
+
+        const obs = state.pendingLocationObservation;
+        obs.lat = lat;
+        obs.lng = lng;
+
+        // Update in IndexedDB
+        updateObservation(obs.id, { lat, lng });
+        addObservationMarker(obs);
+        showToast('success', `位置を設定: ${lat.toFixed(4)}, ${lng.toFixed(4)}`);
+
+        if (state._gpsFixMode) {
+          // GPS fix mode — advance to next
+          state.locationPickerActive = false;
+          state.pendingLocationObservation = null;
+          gpsFixNext();
+        } else {
+          $('#location-picker-hint').classList.add('hidden');
+          state.locationPickerActive = false;
+          state.pendingLocationObservation = null;
+          runAIAndAutoSave(obs);
+        }
+      }
+    }
+  };
+})();
+
+// ============================================================
+// BATCH INPUT BINDING + INIT HOOKS
+// ============================================================
+document.addEventListener('DOMContentLoaded', () => {
+  // Batch file input
+  const batchInput = $('#batch-input');
+  if (batchInput) {
+    batchInput.addEventListener('change', e => {
+      if (e.target.files && e.target.files.length > 0) {
+        processBatchImport(e.target.files);
+      }
+      e.target.value = '';
+    });
+  }
+
+  // Batch modal close
+  const batchClose = document.querySelector('.batch-close');
+  if (batchClose) {
+    batchClose.addEventListener('click', () => {
+      if (batchState.running) {
+        if (confirm('処理中のインポートを中止しますか？')) {
+          batchState.cancelled = true;
+          batchState.running = false;
+        }
+      }
+      $('#batch-import-modal').classList.add('hidden');
+    });
+  }
+
+  // GPS fix buttons
+  const gpsSkip = $('#gps-fix-skip');
+  if (gpsSkip) gpsSkip.addEventListener('click', () => {
+    state.locationPickerActive = false;
+    state.pendingLocationObservation = null;
+    gpsFixNext();
+  });
+  const gpsStop = $('#gps-fix-stop');
+  if (gpsStop) gpsStop.addEventListener('click', endGpsFixMode);
+
+  // Setup clustering listener
+  setTimeout(setupClusteringListener, 3000);
+
+  // Patch globe click handler for cluster/carousel support
+  if (viewer && viewer.scene) {
+    const handler2 = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+    handler2.setInputAction(click => {
+      if (window._handleGlobeClickPatched) {
+        window._handleGlobeClickPatched(click.position);
+      }
+    }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+  }
+});

@@ -2779,3 +2779,270 @@ a:hover {
     flex-direction: column;
   }
 }
+
+/* ============================================================
+   BATCH IMPORT MODAL
+   ============================================================ */
+.batch-modal-container {
+  max-width: 480px;
+  width: 92vw;
+}
+
+.batch-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  background: var(--forest-light);
+  border-radius: 10px;
+  margin-bottom: 16px;
+  font-weight: 500;
+  color: var(--forest-dark);
+}
+
+.batch-summary-icon {
+  font-size: 28px;
+  color: var(--forest-primary);
+}
+
+.batch-progress-wrap {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.batch-progress-bar {
+  flex: 1;
+  height: 10px;
+  background: var(--gm-surface-alt);
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.batch-progress-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--forest-primary), var(--forest-accent));
+  border-radius: 5px;
+  transition: width 0.3s ease;
+}
+
+.batch-progress-pct {
+  font-weight: 700;
+  font-size: 15px;
+  color: var(--forest-primary);
+  min-width: 40px;
+  text-align: right;
+}
+
+.batch-counters {
+  display: flex;
+  justify-content: space-between;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.batch-counter {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  flex: 1;
+  padding: 8px 4px;
+  background: var(--gm-surface);
+  border-radius: 8px;
+}
+
+.batch-counter-icon {
+  font-size: 16px;
+}
+
+.batch-counter span:nth-child(2) {
+  font-weight: 700;
+  font-size: 18px;
+  color: var(--gm-text-primary);
+}
+
+.batch-counter-label {
+  font-size: 10px;
+  color: var(--gm-text-tertiary);
+}
+
+.batch-current {
+  text-align: center;
+  font-size: 12px;
+  color: var(--gm-text-tertiary);
+  margin-bottom: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.batch-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+}
+
+.batch-result {
+  margin-top: 16px;
+  padding: 16px;
+  background: var(--gm-surface);
+  border-radius: 12px;
+  text-align: center;
+}
+
+.batch-result-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--forest-primary);
+  margin-bottom: 12px;
+}
+
+.batch-result-row {
+  padding: 4px 0;
+  font-size: 14px;
+}
+
+.batch-result-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+
+/* ============================================================
+   BATCH BUTTON IN CAMERA SHEET
+   ============================================================ */
+.bsheet-batch-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 12px 16px;
+  margin-top: 8px;
+  border: 2px dashed var(--forest-primary);
+  border-radius: 12px;
+  background: var(--forest-light);
+  color: var(--forest-primary);
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.bsheet-batch-btn:active {
+  background: #c8e6c9;
+}
+
+/* ============================================================
+   GPS FIX BAR
+   ============================================================ */
+.gps-fix-bar {
+  position: fixed;
+  top: 60px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 600;
+  background: var(--gm-white);
+  border-radius: 16px;
+  box-shadow: var(--shadow-4);
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 440px;
+  width: 92vw;
+}
+
+.gps-fix-bar.hidden {
+  display: none !important;
+}
+
+.batch-result.hidden {
+  display: none !important;
+}
+
+.gps-fix-preview {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+}
+
+.gps-fix-preview img {
+  width: 48px;
+  height: 48px;
+  border-radius: 8px;
+  object-fit: cover;
+}
+
+.gps-fix-info {
+  min-width: 0;
+}
+
+#gps-fix-filename {
+  font-weight: 600;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#gps-fix-counter {
+  font-size: 11px;
+  color: var(--gm-text-tertiary);
+}
+
+.gps-fix-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* ============================================================
+   CAROUSEL NAV (Popup)
+   ============================================================ */
+.carousel-nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 8px 0 12px;
+}
+
+.carousel-prev,
+.carousel-next {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid var(--gm-border);
+  background: var(--gm-white);
+  color: var(--gm-text-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.carousel-prev:hover,
+.carousel-next:hover {
+  background: var(--gm-surface);
+}
+
+.carousel-prev.disabled,
+.carousel-next.disabled {
+  opacity: 0.3;
+  pointer-events: none;
+}
+
+.carousel-counter {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--gm-text-secondary);
+}
