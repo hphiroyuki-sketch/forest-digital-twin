@@ -531,65 +531,417 @@ async function updateObservation(id, updates) {
 }
 
 // ============================================================
-// FIELD DATA — AI Identification
+// FIELD DATA — Multi-Stage AI Identification Pipeline
 // ============================================================
-async function identifyWithPlantNet(base64) {
-  const key = localStorage.getItem('forestscope-plantnet-key');
-  if (!key) return null;
-  try {
-    const blob = await fetch(base64).then(r => r.blob());
-    const formData = new FormData();
-    formData.append('images', blob, 'photo.jpg');
-    formData.append('organs', 'auto');
-    const resp = await fetch(`https://my-api.plantnet.org/v2/identify/all?api-key=${key}&include-related-images=false`, {
-      method: 'POST', body: formData
-    });
-    if (!resp.ok) throw new Error(`PlantNet API error: ${resp.status}`);
-    const data = await resp.json();
-    if (!data.results || data.results.length === 0) return null;
-    return data.results.slice(0, 3).map(r => ({
-      name: r.species?.commonNames?.[0] || r.species?.scientificNameWithoutAuthor || '不明',
-      scientificName: r.species?.scientificNameWithoutAuthor || '',
-      category: 'plant', confidence: r.score || 0, source: 'plantnet'
-    }));
-  } catch (err) { console.error('PlantNet error:', err); return null; }
+
+// API rate limiting & tracking
+const API_LIMITS = {
+  plantnet: { perDay: 500, minIntervalMs: 1500 },
+  inaturalist: { minIntervalMs: 1000 },
+  gbif: { minIntervalMs: 100 },
+  wikipedia: { minIntervalMs: 100 },
+};
+let lastApiCallTime = { plantnet: 0, inaturalist: 0, gbif: 0, wikipedia: 0 };
+
+function getPlantNetDailyCount() {
+  const d = new Date().toISOString().slice(0, 10);
+  const stored = localStorage.getItem('fs-plantnet-daily');
+  if (stored) { try { const p = JSON.parse(stored); if (p.date === d) return p.count; } catch {} }
+  return 0;
+}
+function incrementPlantNetDailyCount() {
+  const d = new Date().toISOString().slice(0, 10);
+  const count = getPlantNetDailyCount() + 1;
+  localStorage.setItem('fs-plantnet-daily', JSON.stringify({ date: d, count }));
 }
 
-async function identifyWithINaturalist(base64) {
+// Species info cache (GBIF + Wikipedia) — 30 day TTL
+const CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+function getCachedSpeciesInfo(scientificName) {
+  try {
+    const raw = localStorage.getItem('fs-species-' + scientificName);
+    if (!raw) return null;
+    const data = JSON.parse(raw);
+    if (Date.now() - data.cachedAt > CACHE_TTL_MS) { localStorage.removeItem('fs-species-' + scientificName); return null; }
+    return data;
+  } catch { return null; }
+}
+function setCachedSpeciesInfo(scientificName, info) {
+  try { localStorage.setItem('fs-species-' + scientificName, JSON.stringify({ ...info, cachedAt: Date.now() })); } catch {}
+}
+
+// Utility: base64 to Blob
+async function base64ToBlob(base64) {
+  return fetch(base64).then(r => r.blob());
+}
+
+// Throttle helper
+async function throttleApi(apiName) {
+  const limit = API_LIMITS[apiName];
+  if (!limit) return;
+  const now = Date.now();
+  const wait = limit.minIntervalMs - (now - (lastApiCallTime[apiName] || 0));
+  if (wait > 0) await new Promise(r => setTimeout(r, wait));
+  lastApiCallTime[apiName] = Date.now();
+}
+
+// ─── Stage 1: Image Preprocessing ───
+// Returns the original resized image (variants are optional enhancement for future)
+function preprocessImageForAI(imageBase64) {
+  return { original: imageBase64 };
+}
+
+// ─── Stage 2: Scene Classification via iNaturalist ───
+async function classifyScene(imageBase64, lat, lng) {
+  try {
+    const results = await _rawINaturalistIdentify(imageBase64, lat, lng);
+    if (!results || results.length === 0) return 'unknown';
+    const top = results[0];
+    const iconic = top.iconicTaxon || '';
+    if (iconic === 'Plantae' || iconic === 'Fungi') return 'plant';
+    if (iconic === 'Aves') return 'bird';
+    if (iconic === 'Insecta' || iconic === 'Arachnida') return 'insect';
+    if (['Mammalia', 'Reptilia', 'Amphibia', 'Actinopterygii', 'Mollusca'].includes(iconic)) return 'animal';
+    return 'unknown';
+  } catch { return 'unknown'; }
+}
+
+// ─── Stage 3a: Pl@ntNet Identification ───
+async function identifyWithPlantNet(base64, organs = 'auto') {
+  const key = localStorage.getItem('forestscope-plantnet-key');
+  if (!key) return null;
+  if (getPlantNetDailyCount() >= API_LIMITS.plantnet.perDay) {
+    console.warn('PlantNet daily limit reached');
+    return null;
+  }
+  await throttleApi('plantnet');
+  try {
+    const blob = await base64ToBlob(base64);
+    const formData = new FormData();
+    formData.append('images', blob, 'photo.jpg');
+    formData.append('organs', organs);
+    const url = `https://my-api.plantnet.org/v2/identify/all?api-key=${key}&include-related-images=false&no-reject=false&lang=ja`;
+    const resp = await fetch(url, { method: 'POST', body: formData });
+    if (resp.status === 429) { const err = new Error('RATE_LIMITED'); err.status = 429; throw err; }
+    if (!resp.ok) throw new Error(`PlantNet API error: ${resp.status}`);
+    incrementPlantNetDailyCount();
+    const data = await resp.json();
+    if (!data.results || data.results.length === 0) return null;
+    return data.results.slice(0, 5).map(r => ({
+      scientificName: r.species?.scientificNameWithoutAuthor || '',
+      name: r.species?.commonNames?.[0] || r.species?.scientificNameWithoutAuthor || '不明',
+      commonNames: r.species?.commonNames || [],
+      family: r.species?.family?.scientificNameWithoutAuthor || '',
+      genus: r.species?.genus?.scientificNameWithoutAuthor || '',
+      confidence: r.score || 0,
+      source: 'plantnet',
+      category: 'plant',
+      organ: organs,
+    }));
+  } catch (err) {
+    if (err.status === 429) throw err;
+    console.error('PlantNet error:', err);
+    return null;
+  }
+}
+
+// ─── Stage 3b: iNaturalist Identification (raw) ───
+async function _rawINaturalistIdentify(base64, lat, lng) {
   const useINat = localStorage.getItem('forestscope-use-inaturalist') !== 'false';
   if (!useINat) return null;
+  await throttleApi('inaturalist');
   try {
-    const blob = await fetch(base64).then(r => r.blob());
+    const blob = await base64ToBlob(base64);
     const formData = new FormData();
     formData.append('image', blob, 'photo.jpg');
+    if (lat) formData.append('lat', String(lat));
+    if (lng) formData.append('lng', String(lng));
     const resp = await fetch('https://api.inaturalist.org/v1/computervision/score_image', {
       method: 'POST', body: formData
     });
     if (!resp.ok) throw new Error(`iNaturalist error: ${resp.status}`);
     const data = await resp.json();
     if (!data.results || data.results.length === 0) return null;
-    return data.results.slice(0, 3).map(r => {
+    return data.results.slice(0, 5).map(r => {
       let category = 'other';
       const ic = r.taxon?.iconic_taxon_name || '';
-      if (ic === 'Plantae') category = 'plant';
-      else if (ic === 'Mammalia' || ic === 'Reptilia' || ic === 'Amphibia') category = 'animal';
+      if (ic === 'Plantae' || ic === 'Fungi') category = 'plant';
+      else if (['Mammalia', 'Reptilia', 'Amphibia'].includes(ic)) category = 'animal';
       else if (ic === 'Aves') category = 'bird';
       else if (ic === 'Insecta' || ic === 'Arachnida') category = 'insect';
       return {
         name: r.taxon?.preferred_common_name || r.taxon?.name || '不明',
         scientificName: r.taxon?.name || '',
-        category, confidence: r.combined_score || 0, source: 'inaturalist'
+        category,
+        confidence: (r.combined_score || 0) / 100,
+        source: 'inaturalist',
+        iconicTaxon: ic,
+        taxonId: r.taxon?.id,
+        rank: r.taxon?.rank,
+        wikipediaUrl: r.taxon?.wikipedia_url,
       };
     });
   } catch (err) { console.error('iNaturalist error:', err); return null; }
 }
 
-async function identifySpecies(base64) {
-  let species = await identifyWithPlantNet(base64);
-  if (species) return { species, source: 'plantnet' };
-  species = await identifyWithINaturalist(base64);
-  if (species) return { species, source: 'inaturalist' };
-  return null;
+async function identifyWithINaturalist(base64, lat, lng) {
+  return _rawINaturalistIdentify(base64, lat, lng);
+}
+
+// ─── Stage 4: Cross-check ───
+async function runCrossCheck(imageBase64, lat, lng, sceneType) {
+  let plantnetResults = null, inatResults = null;
+
+  if (sceneType === 'plant' || sceneType === 'unknown') {
+    try { plantnetResults = await identifyWithPlantNet(imageBase64); } catch {}
+  }
+  try { inatResults = await identifyWithINaturalist(imageBase64, lat, lng); } catch {}
+
+  // Merge and cross-check
+  const primary = (sceneType === 'plant' && plantnetResults) ? plantnetResults
+    : (inatResults || plantnetResults || []);
+  const secondary = primary === plantnetResults ? inatResults : plantnetResults;
+
+  let crossCheckMatched = false;
+  if (primary && primary.length > 0 && secondary && secondary.length > 0) {
+    const pName = primary[0].scientificName?.toLowerCase();
+    const match = secondary.find(s => s.scientificName?.toLowerCase() === pName);
+    if (match) {
+      crossCheckMatched = true;
+      primary[0].confidence = Math.min(1.0, primary[0].confidence * 1.2);
+    }
+  }
+
+  // Merge alternatives from secondary
+  const all = [...(primary || [])];
+  if (secondary) {
+    for (const s of secondary) {
+      if (!all.find(a => a.scientificName?.toLowerCase() === s.scientificName?.toLowerCase())) {
+        all.push(s);
+      }
+    }
+  }
+
+  return {
+    results: all.slice(0, 5),
+    crossCheckMatched,
+    primarySource: primary === plantnetResults ? 'plantnet' : 'inaturalist',
+  };
+}
+
+// ─── Stage 5: GBIF Enrichment ───
+async function enrichWithGBIF(scientificName) {
+  if (!scientificName) return null;
+  const cached = getCachedSpeciesInfo(scientificName);
+  if (cached && cached.gbif) return cached.gbif;
+
+  await throttleApi('gbif');
+  try {
+    const url = `https://api.gbif.org/v1/species/match?name=${encodeURIComponent(scientificName)}&strict=false`;
+    const resp = await fetch(url);
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    const result = {
+      kingdom: data.kingdom || '',
+      phylum: data.phylum || '',
+      class: data.class || '',
+      order: data.order || '',
+      family: data.family || '',
+      genus: data.genus || '',
+      species: data.species || '',
+      gbifTaxonKey: data.usageKey || null,
+      matchType: data.matchType || 'NONE',
+      iucnStatus: null,
+    };
+
+    // Try to get IUCN status
+    if (result.gbifTaxonKey) {
+      try {
+        const iucnResp = await fetch(`https://api.gbif.org/v1/species/${result.gbifTaxonKey}/iucnRedListCategory`);
+        if (iucnResp.ok) {
+          const iucnData = await iucnResp.json();
+          result.iucnStatus = iucnData.category || null;
+        }
+      } catch {}
+    }
+
+    // Update cache
+    const existing = getCachedSpeciesInfo(scientificName) || {};
+    setCachedSpeciesInfo(scientificName, { ...existing, gbif: result });
+    return result;
+  } catch (err) { console.error('GBIF error:', err); return null; }
+}
+
+// ─── Stage 6: Wikipedia/Wikidata Enrichment ───
+async function enrichWithWikipedia(scientificName) {
+  if (!scientificName) return null;
+  const cached = getCachedSpeciesInfo(scientificName);
+  if (cached && cached.wikipedia) return cached.wikipedia;
+
+  await throttleApi('wikipedia');
+  try {
+    const result = { japaneseName: null, description: null, thumbnailUrl: null, wikipediaUrlJa: null, wikipediaUrlEn: null };
+
+    // English Wikipedia summary
+    try {
+      const enResp = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(scientificName)}`);
+      if (enResp.ok) {
+        const enData = await enResp.json();
+        result.description = enData.extract || null;
+        result.thumbnailUrl = enData.thumbnail?.source || null;
+        result.wikipediaUrlEn = enData.content_urls?.desktop?.page || null;
+      }
+    } catch {}
+
+    // Wikidata for Japanese name
+    try {
+      const wdResp = await fetch(`https://www.wikidata.org/w/api.php?action=wbgetentities&sites=enwiki&titles=${encodeURIComponent(scientificName)}&languages=ja&props=labels|sitelinks&format=json&origin=*`);
+      if (wdResp.ok) {
+        const wdData = await wdResp.json();
+        const entities = wdData.entities || {};
+        const entity = Object.values(entities)[0];
+        if (entity && entity.labels?.ja) {
+          result.japaneseName = entity.labels.ja.value;
+        }
+        if (entity && entity.sitelinks?.jawiki) {
+          result.wikipediaUrlJa = `https://ja.wikipedia.org/wiki/${encodeURIComponent(entity.sitelinks.jawiki.title)}`;
+        }
+      }
+    } catch {}
+
+    // Update cache
+    const existing = getCachedSpeciesInfo(scientificName) || {};
+    setCachedSpeciesInfo(scientificName, { ...existing, wikipedia: result });
+    return result;
+  } catch (err) { console.error('Wikipedia error:', err); return null; }
+}
+
+// ─── Stage 7: Integrated Confidence Score ───
+function computeFinalConfidence(baseConf, crossCheckMatched, gbifMatchType, hasLocationBonus) {
+  let score = baseConf;
+  if (crossCheckMatched) score *= 1.2;
+  if (gbifMatchType === 'EXACT') score *= 1.0;
+  else if (gbifMatchType === 'FUZZY') score *= 0.9;
+  else if (gbifMatchType === 'HIGHERRANK') score *= 0.7;
+  if (hasLocationBonus) score *= 1.1;
+  return Math.min(1.0, score);
+}
+
+function getConfidenceTier(confidence) {
+  if (confidence >= 0.85) return 'high';
+  if (confidence >= 0.6) return 'medium';
+  return 'low';
+}
+
+// ─── MAIN PIPELINE ───
+async function runIdentificationPipeline(imageBase64, lat, lng) {
+  const stages = {
+    preprocessing: true,
+    sceneClassification: null,
+    primaryAPI: null,
+    crossCheck: false,
+    gbifEnrichment: false,
+    wikipediaEnrichment: false,
+  };
+
+  // Stage 1: Preprocessing
+  const images = preprocessImageForAI(imageBase64);
+
+  // Stage 2: Scene classification
+  stages.sceneClassification = await classifyScene(images.original, lat, lng);
+
+  // Stage 3 & 4: Cross-check identification
+  const crossResult = await runCrossCheck(images.original, lat, lng, stages.sceneClassification);
+  stages.primaryAPI = crossResult.primarySource;
+  stages.crossCheck = crossResult.crossCheckMatched;
+
+  if (!crossResult.results || crossResult.results.length === 0) {
+    return null; // All APIs failed
+  }
+
+  const topResult = crossResult.results[0];
+
+  // Stage 5: GBIF enrichment
+  let gbifData = null;
+  if (topResult.scientificName) {
+    gbifData = await enrichWithGBIF(topResult.scientificName);
+    if (gbifData) stages.gbifEnrichment = true;
+  }
+
+  // Stage 6: Wikipedia enrichment
+  let wikiData = null;
+  if (topResult.scientificName) {
+    wikiData = await enrichWithWikipedia(topResult.scientificName);
+    if (wikiData) stages.wikipediaEnrichment = true;
+  }
+
+  // Stage 7: Final confidence
+  const finalConfidence = computeFinalConfidence(
+    topResult.confidence,
+    crossResult.crossCheckMatched,
+    gbifData?.matchType || 'NONE',
+    lat !== null
+  );
+  const confidenceTier = getConfidenceTier(finalConfidence);
+
+  // Build identification object
+  const identification = {
+    primary: {
+      scientificName: topResult.scientificName,
+      name: wikiData?.japaneseName || topResult.name || topResult.scientificName,
+      japaneseName: wikiData?.japaneseName || null,
+      commonNames: topResult.commonNames || [topResult.name],
+      confidence: finalConfidence,
+      confidenceTier,
+      category: topResult.category || stages.sceneClassification || 'other',
+      kingdom: gbifData?.kingdom || '',
+      phylum: gbifData?.phylum || '',
+      class: gbifData?.class || '',
+      order: gbifData?.order || '',
+      family: gbifData?.family || topResult.family || '',
+      genus: gbifData?.genus || topResult.genus || '',
+      species: gbifData?.species || topResult.scientificName || '',
+      iconicTaxon: topResult.iconicTaxon || stages.sceneClassification || '',
+      source: topResult.source || stages.primaryAPI,
+      crossCheckMatched: crossResult.crossCheckMatched,
+      gbifTaxonKey: gbifData?.gbifTaxonKey || null,
+      iucnStatus: gbifData?.iucnStatus || null,
+      wikipediaSummary: wikiData?.description || null,
+      thumbnailUrl: wikiData?.thumbnailUrl || null,
+      wikipediaUrlJa: wikiData?.wikipediaUrlJa || null,
+      wikipediaUrlEn: wikiData?.wikipediaUrlEn || null,
+    },
+    alternatives: crossResult.results.slice(1).map(r => ({
+      scientificName: r.scientificName,
+      name: r.name,
+      confidence: r.confidence,
+      category: r.category,
+      source: r.source,
+    })),
+    pipelineStages: stages,
+    processedAt: new Date().toISOString(),
+  };
+
+  // Also build legacy species array for backward compatibility
+  const species = crossResult.results.map(r => ({
+    name: r.scientificName === identification.primary.scientificName ? identification.primary.name : r.name,
+    scientificName: r.scientificName,
+    category: r.category,
+    confidence: r === topResult ? finalConfidence : r.confidence,
+    source: r.source,
+    japaneseName: r === topResult ? wikiData?.japaneseName : null,
+    family: r === topResult ? (gbifData?.family || r.family) : r.family,
+    iucnStatus: r === topResult ? gbifData?.iucnStatus : null,
+    confidenceTier: r === topResult ? confidenceTier : getConfidenceTier(r.confidence),
+    crossCheckMatched: r === topResult ? crossResult.crossCheckMatched : false,
+  }));
+
+  return { species, identification, source: stages.primaryAPI };
+}
+
+// Legacy wrapper — called by existing code
+async function identifySpecies(base64, lat, lng) {
+  return runIdentificationPipeline(base64, lat, lng);
 }
 
 // ============================================================
@@ -666,20 +1018,31 @@ function getDeviceLocation() {
 }
 
 async function runAIAndConfirm(observation) {
-  showProcessingOverlay('AI判定中...');
-  const result = await identifySpecies(observation.imageBase64);
+  showProcessingOverlay('AI多段判定中...');
+  const result = await identifySpecies(observation.imageBase64, observation.lat, observation.lng);
   hideProcessingOverlay();
-  if (result) { observation.species = result.species; showConfirmModal(observation); }
-  else { observation.pendingAIIdentification = false; showManualInputModal(observation); }
+  if (result) {
+    observation.species = result.species;
+    observation.identification = result.identification;
+    showConfirmModal(observation);
+  } else {
+    observation.pendingAIIdentification = false;
+    showManualInputModal(observation);
+  }
 }
 
 async function runAIAndAutoSave(observation) {
-  showProcessingOverlay('AI判定中...');
-  const result = await identifySpecies(observation.imageBase64);
+  showProcessingOverlay('AI多段判定中...');
+  const result = await identifySpecies(observation.imageBase64, observation.lat, observation.lng);
   hideProcessingOverlay();
 
-  if (result) { observation.species = result.species; observation.pendingAIIdentification = false; }
-  else { observation.pendingAIIdentification = !navigator.onLine; }
+  if (result) {
+    observation.species = result.species;
+    observation.identification = result.identification;
+    observation.pendingAIIdentification = false;
+  } else {
+    observation.pendingAIIdentification = !navigator.onLine;
+  }
 
   await saveObservation(observation);
   addObservationMarker(observation);
@@ -690,7 +1053,9 @@ async function runAIAndAutoSave(observation) {
   if (observation.species.length > 0) {
     const top = observation.species[0];
     const confidence = Math.round((top.confidence || 0) * 100);
-    showToast('success', `📸 ${top.name} (${confidence}%) — 保存しました`);
+    const tierBadge = top.confidenceTier === 'high' ? '🟢' : top.confidenceTier === 'medium' ? '🟡' : '🔴';
+    const jaName = top.japaneseName ? ` (${top.japaneseName})` : '';
+    showToast('success', `📸 ${top.name}${jaName} ${tierBadge}${confidence}% — 保存しました`);
     showQuickResult(observation);
   } else {
     showToast('info', '📸 写真を保存しました（種不明）');
@@ -768,39 +1133,114 @@ function cancelLocationPicker() {
 function showObservationPopup(obs) {
   const body = $('#fd-popup-body');
   const species = obs.species || [];
-  const speciesHtml = species.length > 0
-    ? species.map(s => `
+  const id = obs.identification?.primary;
+  const alts = obs.identification?.alternatives || [];
+
+  // Confidence badge
+  const tierBadge = (tier) => tier === 'high' ? '<span class="conf-badge conf-high">高信頼</span>'
+    : tier === 'medium' ? '<span class="conf-badge conf-medium">中信頼</span>'
+    : '<span class="conf-badge conf-low">要確認</span>';
+
+  // IUCN display
+  const iucnLabels = { LC: '低懸念', NT: '準絶滅危惧', VU: '危急', EN: '絶滅危惧', CR: '近絶滅', EX: '絶滅' };
+  const iucnHtml = id?.iucnStatus ? `<div class="fd-popup-iucn">🌍 IUCN: <strong>${id.iucnStatus}</strong> (${iucnLabels[id.iucnStatus] || id.iucnStatus})</div>` : '';
+
+  // Primary species display
+  let primaryHtml = '';
+  if (id) {
+    const conf = Math.round((id.confidence || 0) * 100);
+    primaryHtml = `
+      <div class="fd-popup-primary">
+        <div class="fd-popup-species-main">
+          <span class="material-icons" style="color: var(--forest-accent); font-size:28px;">${CATEGORY_ICONS[id.category] || 'eco'}</span>
+          <div>
+            <div class="fd-popup-main-name">${id.japaneseName || id.name} <span style="font-style:italic;color:var(--gm-text-secondary);">(${id.scientificName})</span></div>
+            <div class="fd-popup-main-family">${id.family ? '科: ' + id.family : ''}</div>
+            <div class="fd-popup-main-conf">${tierBadge(id.confidenceTier)} ${conf}% ${id.crossCheckMatched ? '✅ 両API一致' : ''}</div>
+          </div>
+        </div>
+        ${iucnHtml}
+        ${id.wikipediaSummary ? `<div class="fd-popup-wiki-summary">${id.wikipediaSummary.slice(0, 150)}...</div>` : ''}
+        ${id.wikipediaUrlJa ? `<a href="${id.wikipediaUrlJa}" target="_blank" rel="noopener" class="fd-popup-wiki-link">📖 Wikipediaで詳しく見る</a>` : (id.wikipediaUrlEn ? `<a href="${id.wikipediaUrlEn}" target="_blank" rel="noopener" class="fd-popup-wiki-link">📖 Wikipedia (EN)</a>` : '')}
+      </div>
+    `;
+  } else if (species.length > 0) {
+    primaryHtml = species.map(s => `
       <div class="fd-popup-species">
         <span class="material-icons" style="color: var(--forest-accent);">${CATEGORY_ICONS[s.category] || 'eco'}</span>
-        <div>
-          <strong>${s.name}</strong>
-          <div style="font-size:11px; color:var(--gm-text-tertiary);">${s.scientificName || ''} · ${Math.round((s.confidence || 0) * 100)}% · ${s.source || ''}</div>
-        </div>
-      </div>
-    `).join('')
-    : '<p style="color:var(--gm-text-tertiary);">種情報なし</p>';
+        <div><strong>${s.name}</strong>
+        <div style="font-size:11px; color:var(--gm-text-tertiary);">${s.scientificName || ''} · ${Math.round((s.confidence || 0) * 100)}% · ${s.source || ''}</div></div>
+      </div>`).join('');
+  } else {
+    primaryHtml = '<p style="color:var(--gm-text-tertiary);">種情報なし</p>';
+  }
+
+  // Alternatives
+  const altsHtml = alts.length > 0 ? `
+    <div class="fd-popup-section-title" style="margin-top:12px;">その他の候補</div>
+    ${alts.map(a => `<div class="fd-popup-alt">• ${a.name} <em>${a.scientificName}</em> (${Math.round((a.confidence || 0) * 100)}%)</div>`).join('')}
+  ` : '';
+
+  // User corrected badge
+  const correctedHtml = obs.userCorrected ? '<div class="fd-popup-corrected">✏️ ユーザー訂正済み</div>' : '';
 
   body.innerHTML = `
     <div class="fd-popup-img"><img src="${obs.imageBase64}" alt="observation photo"></div>
     <div class="fd-popup-details">
       <div class="fd-popup-section-title">種同定</div>
-      ${speciesHtml}
+      ${correctedHtml}
+      ${primaryHtml}
+      ${altsHtml}
       <div class="fd-popup-section-title" style="margin-top:12px;">位置情報</div>
-      <p>緯度: ${obs.lat?.toFixed(6) || '不明'} / 経度: ${obs.lng?.toFixed(6) || '不明'}</p>
-      <p>撮影日時: ${formatDateTime(obs.capturedAt)}</p>
-      ${obs.userNote ? `<p>メモ: ${obs.userNote}</p>` : ''}
+      <p>📍 ${obs.lat?.toFixed(6) || '不明'}°N, ${obs.lng?.toFixed(6) || '不明'}°E</p>
+      <p>📅 ${formatDateTime(obs.capturedAt)}</p>
+      ${obs.userNote ? `<p>📝 ${obs.userNote}</p>` : ''}
     </div>
     <div class="fd-popup-actions">
+      <button class="secondary-btn" id="fd-popup-reidentify"><span class="material-icons">refresh</span> 再判定</button>
+      <button class="secondary-btn" id="fd-popup-edit"><span class="material-icons">edit</span> 訂正</button>
+      <button class="secondary-btn" id="fd-popup-fly"><span class="material-icons">flight</span> 飛ぶ</button>
       <button class="secondary-btn fd-danger-btn" id="fd-popup-delete"><span class="material-icons">delete</span> 削除</button>
     </div>
   `;
 
-  body.querySelector('#fd-popup-delete').addEventListener('click', async () => {
+  // Re-identify
+  body.querySelector('#fd-popup-reidentify')?.addEventListener('click', async () => {
+    $('#observation-popup').classList.add('hidden');
+    showProcessingOverlay('再判定中...');
+    const result = await identifySpecies(obs.imageBase64, obs.lat, obs.lng);
+    hideProcessingOverlay();
+    if (result) {
+      obs.species = result.species;
+      obs.identification = result.identification;
+      obs.pendingAIIdentification = false;
+      await updateObservation(obs.id, obs);
+      showToast('success', '再判定が完了しました');
+    } else {
+      showToast('warning', '再判定に失敗しました');
+    }
+    showObservationPopup(obs);
+  });
+
+  // User correction
+  body.querySelector('#fd-popup-edit')?.addEventListener('click', () => {
+    $('#observation-popup').classList.add('hidden');
+    showManualInputModal(obs);
+  });
+
+  // Fly to
+  body.querySelector('#fd-popup-fly')?.addEventListener('click', () => {
+    if (obs.lat && obs.lng) flyTo(obs.lat, obs.lng, 500);
+  });
+
+  // Delete
+  body.querySelector('#fd-popup-delete')?.addEventListener('click', async () => {
     await deleteObservation(obs.id);
     state.observations = state.observations.filter(o => o.id !== obs.id);
     const ent = observationEntities.find(e => e.id === obs.id);
     if (ent) { viewer.entities.remove(ent.entity); observationEntities = observationEntities.filter(e => e.id !== obs.id); }
     renderFieldDataPanel();
+    updateClustering();
     $('#observation-popup').classList.add('hidden');
     showToast('info', 'データを削除しました');
   });
@@ -867,6 +1307,8 @@ function showManualInputModal(obs) {
     }];
     obs.userNote = noteInput?.value || '';
     obs.pendingAIIdentification = false;
+    obs.userCorrected = true;
+    obs.correctedAt = new Date().toISOString();
 
     await saveObservation(obs);
     if (!state.observations.find(o => o.id === obs.id)) {
@@ -892,12 +1334,25 @@ function showExportModal() {
   const exportBtn = $('#fd-export-csv');
   if (exportBtn) {
     exportBtn.onclick = () => {
-      const rows = state.observations.map(o => ({
-        id: o.id, lat: o.lat, lng: o.lng, capturedAt: o.capturedAt,
-        species: o.species?.[0]?.name || '', scientificName: o.species?.[0]?.scientificName || '',
-        category: o.species?.[0]?.category || '', confidence: o.species?.[0]?.confidence || '',
-        note: o.userNote || '',
-      }));
+      const rows = state.observations.map(o => {
+        const sp = o.species?.[0] || {};
+        const id = o.identification?.primary || {};
+        return {
+          id: o.id, lat: o.lat, lng: o.lng, capturedAt: o.capturedAt,
+          species: sp.name || '', scientificName: sp.scientificName || '',
+          japanese_name: id.japaneseName || sp.japaneseName || '',
+          category: sp.category || '', confidence: sp.confidence || '',
+          confidence_tier: sp.confidenceTier || id.confidenceTier || '',
+          family: id.family || sp.family || '',
+          genus: id.genus || '',
+          kingdom: id.kingdom || '',
+          iucn_status: id.iucnStatus || sp.iucnStatus || '',
+          gbif_taxon_key: id.gbifTaxonKey || '',
+          cross_check_matched: sp.crossCheckMatched || id.crossCheckMatched || false,
+          user_corrected: o.userCorrected || false,
+          source: sp.source || '', note: o.userNote || '',
+        };
+      });
       const csv = Papa.unparse(rows);
       const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
@@ -942,9 +1397,10 @@ function setupOfflineHandling() {
     showToast('success', 'オンラインに復帰しました');
     const pending = state.observations.filter(o => o.pendingAIIdentification);
     for (const obs of pending) {
-      const result = await identifySpecies(obs.imageBase64);
+      const result = await identifySpecies(obs.imageBase64, obs.lat, obs.lng);
       if (result) {
         obs.species = result.species;
+        obs.identification = result.identification;
         obs.pendingAIIdentification = false;
         await updateObservation(obs.id, obs);
         renderFieldDataPanel();
@@ -1216,12 +1672,12 @@ function setBatchCurrentFile(name) {
 }
 
 // Throttled API call — ensures minimum interval between Pl@ntNet calls
-async function throttledIdentify(base64) {
+async function throttledIdentify(base64, lat, lng) {
   const now = Date.now();
   const wait = PLANTNET_RATE_LIMIT_MS - (now - batchState.lastApiCall);
   if (wait > 0) await new Promise(r => setTimeout(r, wait));
   batchState.lastApiCall = Date.now();
-  return identifySpecies(base64);
+  return identifySpecies(base64, lat, lng);
 }
 
 // Process a single image in the batch
@@ -1262,9 +1718,13 @@ async function processBatchItem(file, retryCount = 0) {
 
     // AI identification with retry for 429
     try {
-      const result = await throttledIdentify(imageBase64);
-      if (result) { observation.species = result.species; }
-      else { observation.pendingAIIdentification = !navigator.onLine; }
+      const result = await throttledIdentify(imageBase64, lat, lng);
+      if (result) {
+        observation.species = result.species;
+        observation.identification = result.identification;
+      } else {
+        observation.pendingAIIdentification = !navigator.onLine;
+      }
     } catch (apiErr) {
       if (apiErr?.status === 429 && retryCount < 3) {
         batchState.processing--;
