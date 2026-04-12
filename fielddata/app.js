@@ -612,7 +612,10 @@ async function classifySceneWithResults(imageBase64, lat, lng) {
   try {
     console.log('[Pipeline] Stage 2: Scene classification via iNaturalist...');
     const results = await _rawINaturalistIdentify(imageBase64, lat, lng);
-    if (!results || results.length === 0) return { sceneType: 'unknown', inatResults: null };
+    if (!results || results.length === 0) {
+      console.log('[Pipeline] iNat returned no results, scene unknown');
+      return { sceneType: 'unknown', inatResults: null };
+    }
     const top = results[0];
     const iconic = top.iconicTaxon || '';
     let sceneType = 'unknown';
@@ -623,7 +626,7 @@ async function classifySceneWithResults(imageBase64, lat, lng) {
     console.log(`[Pipeline] Scene classified as: ${sceneType} (${iconic})`);
     return { sceneType, inatResults: results };
   } catch (err) {
-    console.warn('[Pipeline] Scene classification failed:', err);
+    console.warn('[Pipeline] Scene classification failed (iNat may require auth):', err.message);
     return { sceneType: 'unknown', inatResults: null };
   }
 }
@@ -645,6 +648,10 @@ async function identifyWithPlantNet(base64, organs = 'auto') {
     const url = `https://my-api.plantnet.org/v2/identify/all?api-key=${key}&include-related-images=false&no-reject=false&lang=ja`;
     const resp = await fetchWithTimeout(url, { method: 'POST', body: formData }, 20000);
     if (resp.status === 429) { const err = new Error('RATE_LIMITED'); err.status = 429; throw err; }
+    if (resp.status === 403 || resp.status === 401) {
+      console.warn(`[Pipeline] PlantNet auth error: ${resp.status}`);
+      return null;
+    }
     if (!resp.ok) throw new Error(`PlantNet API error: ${resp.status}`);
     incrementPlantNetDailyCount();
     const data = await resp.json();
@@ -681,6 +688,10 @@ async function _rawINaturalistIdentify(base64, lat, lng) {
     const resp = await fetchWithTimeout('https://api.inaturalist.org/v1/computervision/score_image', {
       method: 'POST', body: formData
     }, 20000);
+    if (resp.status === 401 || resp.status === 403) {
+      console.warn(`[Pipeline] iNaturalist auth error: ${resp.status} - CV API may require authentication`);
+      return null;
+    }
     if (!resp.ok) throw new Error(`iNaturalist error: ${resp.status}`);
     const data = await resp.json();
     if (!data.results || data.results.length === 0) return null;
@@ -715,26 +726,32 @@ async function identifyWithINaturalist(base64, lat, lng) {
 async function runCrossCheck(imageBase64, lat, lng, sceneType, cachedInatResults) {
   let plantnetResults = null, inatResults = cachedInatResults || null;
 
-  // Pl@ntNet: run for plants or unknown scenes
-  if (sceneType === 'plant' || sceneType === 'unknown') {
-    console.log('[Pipeline] Stage 3a: Pl@ntNet identification...');
-    try { plantnetResults = await identifyWithPlantNet(imageBase64); } catch (e) { console.warn('[Pipeline] PlantNet failed:', e); }
-    if (plantnetResults) console.log(`[Pipeline] PlantNet top: ${plantnetResults[0]?.scientificName} (${Math.round((plantnetResults[0]?.confidence||0)*100)}%)`);
-  }
+  // Always try Pl@ntNet (works for plants and general images)
+  console.log('[Pipeline] Stage 3a: Pl@ntNet identification...');
+  try { plantnetResults = await identifyWithPlantNet(imageBase64); } catch (e) { console.warn('[Pipeline] PlantNet failed:', e.message); }
+  if (plantnetResults) console.log(`[Pipeline] PlantNet top: ${plantnetResults[0]?.scientificName} (${Math.round((plantnetResults[0]?.confidence||0)*100)}%)`);
+  else console.log('[Pipeline] PlantNet returned no results');
 
   // iNaturalist: only call if we don't already have cached results
   if (!inatResults) {
     console.log('[Pipeline] Stage 3b: iNaturalist identification...');
-    try { inatResults = await identifyWithINaturalist(imageBase64, lat, lng); } catch (e) { console.warn('[Pipeline] iNat failed:', e); }
+    try { inatResults = await identifyWithINaturalist(imageBase64, lat, lng); } catch (e) { console.warn('[Pipeline] iNat failed:', e.message); }
   } else {
     console.log('[Pipeline] Reusing iNaturalist results from scene classification');
   }
   if (inatResults) console.log(`[Pipeline] iNat top: ${inatResults[0]?.scientificName} (${Math.round((inatResults[0]?.confidence||0)*100)}%)`);
 
-  // Merge and cross-check
-  const primary = (sceneType === 'plant' && plantnetResults) ? plantnetResults
-    : (inatResults || plantnetResults || []);
-  const secondary = primary === plantnetResults ? inatResults : plantnetResults;
+  // Determine primary source — whichever returned results
+  let primary, secondary;
+  if (plantnetResults && inatResults) {
+    // Both succeeded: use PlantNet for plants, iNat for animals
+    primary = (sceneType === 'plant') ? plantnetResults : inatResults;
+    secondary = (primary === plantnetResults) ? inatResults : plantnetResults;
+  } else {
+    // Only one succeeded
+    primary = plantnetResults || inatResults || [];
+    secondary = null;
+  }
 
   let crossCheckMatched = false;
   if (primary && primary.length > 0 && secondary && secondary.length > 0) {
@@ -1044,8 +1061,8 @@ async function runIdentificationPipeline(imageBase64, lat, lng) {
 
 // Legacy wrapper — called by existing code
 async function identifySpecies(base64, lat, lng) {
-  // Global 60-second timeout to prevent infinite hangs
-  const PIPELINE_TIMEOUT_MS = 60000;
+  // Global 30-second timeout to prevent hangs
+  const PIPELINE_TIMEOUT_MS = 30000;
   try {
     const result = await Promise.race([
       runIdentificationPipeline(base64, lat, lng),
