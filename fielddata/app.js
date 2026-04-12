@@ -319,10 +319,14 @@ function renderFieldDataPanel() {
 // EVENT BINDINGS
 // ============================================================
 function bindEvents() {
-  // Sidebar toggle
-  $('#sidebar-toggle').addEventListener('click', () => {
-    $('#forest-panel').classList.toggle('collapsed');
-  });
+  // Sidebar toggle (desktop only — may not exist on mobile)
+  const sidebarToggle = $('#sidebar-toggle');
+  if (sidebarToggle) {
+    sidebarToggle.addEventListener('click', () => {
+      const panel = $('#forest-panel');
+      if (panel) panel.classList.toggle('collapsed');
+    });
+  }
 
   // Region items
   document.addEventListener('click', e => {
@@ -345,6 +349,7 @@ function bindEvents() {
   // Keyboard shortcuts
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape') {
+      closeBsheet();
       ['observation-popup', 'confirm-modal', 'manual-input-modal', 'export-modal', 'settings-modal'].forEach(id => {
         const el = $('#' + id); if (el) el.classList.add('hidden');
       });
@@ -353,24 +358,32 @@ function bindEvents() {
   });
 
   // ====== FIELD DATA Event Bindings ======
-  $('#fd-add-photo-btn').addEventListener('click', () => { $('#photo-input').click(); });
-  $('#photo-input').addEventListener('change', e => { handlePhotoUpload(e.target.files); e.target.value = ''; });
+  const addPhotoBtn = $('#fd-add-photo-btn');
+  if (addPhotoBtn) addPhotoBtn.addEventListener('click', () => { $('#photo-input').click(); });
+
+  const photoInput = $('#photo-input');
+  if (photoInput) photoInput.addEventListener('change', e => { handlePhotoUpload(e.target.files); e.target.value = ''; });
 
   const photoDropzone = $('#photo-dropzone');
-  photoDropzone.addEventListener('dragover', e => { e.preventDefault(); photoDropzone.classList.add('dragover'); });
-  photoDropzone.addEventListener('dragleave', () => { photoDropzone.classList.remove('dragover'); });
-  photoDropzone.addEventListener('drop', e => { e.preventDefault(); photoDropzone.classList.remove('dragover'); handlePhotoUpload(e.dataTransfer.files); });
-  photoDropzone.addEventListener('click', () => { $('#photo-input').click(); });
+  if (photoDropzone) {
+    photoDropzone.addEventListener('dragover', e => { e.preventDefault(); photoDropzone.classList.add('dragover'); });
+    photoDropzone.addEventListener('dragleave', () => { photoDropzone.classList.remove('dragover'); });
+    photoDropzone.addEventListener('drop', e => { e.preventDefault(); photoDropzone.classList.remove('dragover'); handlePhotoUpload(e.dataTransfer.files); });
+    photoDropzone.addEventListener('click', () => { $('#photo-input').click(); });
+  }
 
-  $('#fd-export-btn').addEventListener('click', showExportModal);
-  $('#fd-settings-btn').addEventListener('click', showSettingsModal);
+  const exportBtn = $('#fd-export-btn');
+  if (exportBtn) exportBtn.addEventListener('click', showExportModal);
 
-  // Modal close buttons
-  $$('.fd-popup-close').forEach(b => b.addEventListener('click', () => $('#observation-popup').classList.add('hidden')));
-  $$('.fd-confirm-close').forEach(b => b.addEventListener('click', () => $('#confirm-modal').classList.add('hidden')));
-  $$('.fd-manual-close').forEach(b => b.addEventListener('click', () => $('#manual-input-modal').classList.add('hidden')));
-  $$('.fd-export-close').forEach(b => b.addEventListener('click', () => $('#export-modal').classList.add('hidden')));
-  $$('.fd-settings-close').forEach(b => b.addEventListener('click', () => $('#settings-modal').classList.add('hidden')));
+  const settingsBtn = $('#fd-settings-btn');
+  if (settingsBtn) settingsBtn.addEventListener('click', showSettingsModal);
+
+  // Modal close buttons (safe — $$ returns empty array if none found)
+  $$('.fd-popup-close').forEach(b => b.addEventListener('click', () => { const el = $('#observation-popup'); if (el) el.classList.add('hidden'); }));
+  $$('.fd-confirm-close').forEach(b => b.addEventListener('click', () => { const el = $('#confirm-modal'); if (el) el.classList.add('hidden'); }));
+  $$('.fd-manual-close').forEach(b => b.addEventListener('click', () => { const el = $('#manual-input-modal'); if (el) el.classList.add('hidden'); }));
+  $$('.fd-export-close').forEach(b => b.addEventListener('click', () => { const el = $('#export-modal'); if (el) el.classList.add('hidden'); }));
+  $$('.fd-settings-close').forEach(b => b.addEventListener('click', () => { const el = $('#settings-modal'); if (el) el.classList.add('hidden'); }));
 
   // Modal overlay click to close
   ['observation-popup', 'confirm-modal', 'manual-input-modal', 'export-modal', 'settings-modal'].forEach(id => {
@@ -379,19 +392,26 @@ function bindEvents() {
   });
 
   // Privacy accept
-  $('#fd-privacy-accept').addEventListener('click', () => {
-    localStorage.setItem('forestscope-privacy-accepted', 'true');
-    $('#privacy-modal').classList.add('hidden');
-  });
+  const privacyBtn = $('#fd-privacy-accept');
+  if (privacyBtn) {
+    privacyBtn.addEventListener('click', () => {
+      localStorage.setItem('forestscope-privacy-accepted', 'true');
+      const modal = $('#privacy-modal');
+      if (modal) modal.classList.add('hidden');
+    });
+  }
 
   // Location picker cancel
-  $('#location-picker-cancel').addEventListener('click', cancelLocationPicker);
+  const locCancel = $('#location-picker-cancel');
+  if (locCancel) locCancel.addEventListener('click', cancelLocationPicker);
 
-  // Globe click for location picking
-  const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
-  handler.setInputAction(click => {
-    handleGlobeClick(click.position);
-  }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+  // Globe click for location picking (CesiumJS)
+  if (viewer && viewer.scene) {
+    const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+    handler.setInputAction(click => {
+      handleGlobeClick(click.position);
+    }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
+  }
 
   // Field data panel toggle
   const fdToggle = $('#fd-panel-toggle');
@@ -399,7 +419,7 @@ function bindEvents() {
     fdToggle.addEventListener('click', () => {
       state.fieldDataPanelOpen = !state.fieldDataPanelOpen;
       const panel = $('#fielddata-panel');
-      panel.classList.toggle('open', state.fieldDataPanelOpen);
+      if (panel) panel.classList.toggle('open', state.fieldDataPanelOpen);
     });
   }
 }
