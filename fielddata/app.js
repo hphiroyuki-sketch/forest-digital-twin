@@ -1088,7 +1088,7 @@ async function processPhoto(file) {
       }
     } catch (exifErr) { console.warn('EXIF extraction failed:', exifErr); }
 
-    // Fallback: device GPS
+    // Fallback: device GPS (with 5s timeout to avoid hanging)
     if (lat === null || lng === null) {
       showProcessingOverlay('位置情報を取得中...');
       try {
@@ -1114,55 +1114,73 @@ async function processPhoto(file) {
 
     await runAIAndAutoSave(observation);
   } catch (err) {
-    hideProcessingOverlay();
     console.error('Photo processing error:', err);
     showToast('error', '写真の処理に失敗しました');
+  } finally {
+    // ALWAYS hide overlay no matter what
+    hideProcessingOverlay();
+    _photoProcessing = false;
   }
 }
 
 function getDeviceLocation() {
   return new Promise((resolve, reject) => {
     if (!navigator.geolocation) { reject(new Error('Geolocation not supported')); return; }
+    // 5s timeout for GPS (was 10s, reduced to avoid long hangs)
+    const timeoutId = setTimeout(() => reject(new Error('GPS timeout')), 5000);
     navigator.geolocation.getCurrentPosition(
-      pos => resolve({ latitude: pos.coords.latitude, longitude: pos.coords.longitude }),
-      err => reject(err),
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+      pos => { clearTimeout(timeoutId); resolve({ latitude: pos.coords.latitude, longitude: pos.coords.longitude }); },
+      err => { clearTimeout(timeoutId); reject(err); },
+      { enableHighAccuracy: true, timeout: 5000, maximumAge: 60000 }
     );
   });
 }
 
 async function runAIAndConfirm(observation) {
-  showProcessingOverlay('AI多段判定中...');
-  const result = await identifySpecies(observation.imageBase64, observation.lat, observation.lng);
-  hideProcessingOverlay();
-  if (result) {
-    observation.species = result.species;
-    observation.identification = result.identification;
-    showConfirmModal(observation);
-  } else {
-    observation.pendingAIIdentification = false;
+  showProcessingOverlay('AI判定中...');
+  try {
+    const result = await identifySpecies(observation.imageBase64, observation.lat, observation.lng);
+    if (result) {
+      observation.species = result.species;
+      observation.identification = result.identification;
+      showConfirmModal(observation);
+    } else {
+      observation.pendingAIIdentification = false;
+      showManualInputModal(observation);
+    }
+  } catch (err) {
+    console.error('AI confirm error:', err);
+    observation.pendingAIIdentification = true;
     showManualInputModal(observation);
+  } finally {
+    hideProcessingOverlay();
   }
 }
 
 async function runAIAndAutoSave(observation) {
-  showProcessingOverlay('AI多段判定中...');
-  const result = await identifySpecies(observation.imageBase64, observation.lat, observation.lng);
-  hideProcessingOverlay();
-
-  if (result) {
-    observation.species = result.species;
-    observation.identification = result.identification;
-    observation.pendingAIIdentification = false;
-  } else {
-    observation.pendingAIIdentification = !navigator.onLine;
+  showProcessingOverlay('AI判定中...');
+  try {
+    const result = await identifySpecies(observation.imageBase64, observation.lat, observation.lng);
+    if (result) {
+      observation.species = result.species;
+      observation.identification = result.identification;
+      observation.pendingAIIdentification = false;
+    } else {
+      observation.pendingAIIdentification = !navigator.onLine;
+    }
+  } catch (err) {
+    console.error('AI auto-save error:', err);
+    observation.pendingAIIdentification = true;
+  } finally {
+    hideProcessingOverlay();
   }
 
+  // Save regardless of AI success/failure
   await saveObservation(observation);
   addObservationMarker(observation);
   state.observations.push(observation);
   renderFieldDataPanel();
-  flyTo(observation.lat, observation.lng, 2000);
+  if (observation.lat && observation.lng) flyTo(observation.lat, observation.lng, 2000);
 
   if (observation.species.length > 0) {
     const top = observation.species[0];
