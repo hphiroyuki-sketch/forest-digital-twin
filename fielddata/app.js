@@ -534,6 +534,13 @@ async function updateObservation(id, updates) {
 // FIELD DATA — Multi-Stage AI Identification Pipeline
 // ============================================================
 
+// Default API keys (built-in)
+const DEFAULT_PLANTNET_KEY = '2b10VmN9DMVabEoiGlusHXve';
+
+function getPlantNetKey() {
+  return localStorage.getItem('forestscope-plantnet-key') || DEFAULT_PLANTNET_KEY;
+}
+
 // API rate limiting & tracking
 const API_LIMITS = {
   plantnet: { perDay: 500, minIntervalMs: 1500 },
@@ -592,23 +599,30 @@ function preprocessImageForAI(imageBase64) {
 }
 
 // ─── Stage 2: Scene Classification via iNaturalist ───
-async function classifyScene(imageBase64, lat, lng) {
+// Returns { sceneType, inatResults } so we can reuse iNat data in cross-check
+async function classifySceneWithResults(imageBase64, lat, lng) {
   try {
+    console.log('[Pipeline] Stage 2: Scene classification via iNaturalist...');
     const results = await _rawINaturalistIdentify(imageBase64, lat, lng);
-    if (!results || results.length === 0) return 'unknown';
+    if (!results || results.length === 0) return { sceneType: 'unknown', inatResults: null };
     const top = results[0];
     const iconic = top.iconicTaxon || '';
-    if (iconic === 'Plantae' || iconic === 'Fungi') return 'plant';
-    if (iconic === 'Aves') return 'bird';
-    if (iconic === 'Insecta' || iconic === 'Arachnida') return 'insect';
-    if (['Mammalia', 'Reptilia', 'Amphibia', 'Actinopterygii', 'Mollusca'].includes(iconic)) return 'animal';
-    return 'unknown';
-  } catch { return 'unknown'; }
+    let sceneType = 'unknown';
+    if (iconic === 'Plantae' || iconic === 'Fungi') sceneType = 'plant';
+    else if (iconic === 'Aves') sceneType = 'bird';
+    else if (iconic === 'Insecta' || iconic === 'Arachnida') sceneType = 'insect';
+    else if (['Mammalia', 'Reptilia', 'Amphibia', 'Actinopterygii', 'Mollusca'].includes(iconic)) sceneType = 'animal';
+    console.log(`[Pipeline] Scene classified as: ${sceneType} (${iconic})`);
+    return { sceneType, inatResults: results };
+  } catch (err) {
+    console.warn('[Pipeline] Scene classification failed:', err);
+    return { sceneType: 'unknown', inatResults: null };
+  }
 }
 
 // ─── Stage 3a: Pl@ntNet Identification ───
 async function identifyWithPlantNet(base64, organs = 'auto') {
-  const key = localStorage.getItem('forestscope-plantnet-key');
+  const key = getPlantNetKey();
   if (!key) return null;
   if (getPlantNetDailyCount() >= API_LIMITS.plantnet.perDay) {
     console.warn('PlantNet daily limit reached');
@@ -689,13 +703,25 @@ async function identifyWithINaturalist(base64, lat, lng) {
 }
 
 // ─── Stage 4: Cross-check ───
-async function runCrossCheck(imageBase64, lat, lng, sceneType) {
-  let plantnetResults = null, inatResults = null;
+// cachedInatResults: reuse iNat results from scene classification to avoid duplicate API calls
+async function runCrossCheck(imageBase64, lat, lng, sceneType, cachedInatResults) {
+  let plantnetResults = null, inatResults = cachedInatResults || null;
 
+  // Pl@ntNet: run for plants or unknown scenes
   if (sceneType === 'plant' || sceneType === 'unknown') {
-    try { plantnetResults = await identifyWithPlantNet(imageBase64); } catch {}
+    console.log('[Pipeline] Stage 3a: Pl@ntNet identification...');
+    try { plantnetResults = await identifyWithPlantNet(imageBase64); } catch (e) { console.warn('[Pipeline] PlantNet failed:', e); }
+    if (plantnetResults) console.log(`[Pipeline] PlantNet top: ${plantnetResults[0]?.scientificName} (${Math.round((plantnetResults[0]?.confidence||0)*100)}%)`);
   }
-  try { inatResults = await identifyWithINaturalist(imageBase64, lat, lng); } catch {}
+
+  // iNaturalist: only call if we don't already have cached results
+  if (!inatResults) {
+    console.log('[Pipeline] Stage 3b: iNaturalist identification...');
+    try { inatResults = await identifyWithINaturalist(imageBase64, lat, lng); } catch (e) { console.warn('[Pipeline] iNat failed:', e); }
+  } else {
+    console.log('[Pipeline] Reusing iNaturalist results from scene classification');
+  }
+  if (inatResults) console.log(`[Pipeline] iNat top: ${inatResults[0]?.scientificName} (${Math.round((inatResults[0]?.confidence||0)*100)}%)`);
 
   // Merge and cross-check
   const primary = (sceneType === 'plant' && plantnetResults) ? plantnetResults
@@ -709,6 +735,9 @@ async function runCrossCheck(imageBase64, lat, lng, sceneType) {
     if (match) {
       crossCheckMatched = true;
       primary[0].confidence = Math.min(1.0, primary[0].confidence * 1.2);
+      console.log('[Pipeline] ✅ Cross-check MATCHED! Confidence boosted.');
+    } else {
+      console.log(`[Pipeline] ⚠️ Cross-check mismatch: ${primary[0]?.scientificName} vs ${secondary[0]?.scientificName}`);
     }
   }
 
@@ -793,21 +822,75 @@ async function enrichWithWikipedia(scientificName) {
       }
     } catch {}
 
-    // Wikidata for Japanese name
+    // Wikidata for Japanese name (try multiple approaches)
     try {
+      // Approach 1: Direct Wikidata lookup by enwiki title
       const wdResp = await fetch(`https://www.wikidata.org/w/api.php?action=wbgetentities&sites=enwiki&titles=${encodeURIComponent(scientificName)}&languages=ja&props=labels|sitelinks&format=json&origin=*`);
       if (wdResp.ok) {
         const wdData = await wdResp.json();
         const entities = wdData.entities || {};
         const entity = Object.values(entities)[0];
-        if (entity && entity.labels?.ja) {
-          result.japaneseName = entity.labels.ja.value;
-        }
-        if (entity && entity.sitelinks?.jawiki) {
-          result.wikipediaUrlJa = `https://ja.wikipedia.org/wiki/${encodeURIComponent(entity.sitelinks.jawiki.title)}`;
+        if (entity && entity.id !== '-1') {
+          if (entity.labels?.ja) {
+            result.japaneseName = entity.labels.ja.value;
+          }
+          if (entity.sitelinks?.jawiki) {
+            result.wikipediaUrlJa = `https://ja.wikipedia.org/wiki/${encodeURIComponent(entity.sitelinks.jawiki.title)}`;
+            // If no Japanese label, use jawiki title as fallback
+            if (!result.japaneseName && entity.sitelinks.jawiki.title) {
+              result.japaneseName = entity.sitelinks.jawiki.title;
+            }
+          }
         }
       }
     } catch {}
+
+    // Approach 2: If still no Japanese name, try Japanese Wikipedia search directly
+    if (!result.japaneseName) {
+      try {
+        const jaResp = await fetch(`https://ja.wikipedia.org/w/api.php?action=opensearch&search=${encodeURIComponent(scientificName)}&limit=1&namespace=0&format=json&origin=*`);
+        if (jaResp.ok) {
+          const jaData = await jaResp.json();
+          if (jaData[1] && jaData[1].length > 0) {
+            result.japaneseName = jaData[1][0];
+            result.wikipediaUrlJa = jaData[3]?.[0] || null;
+          }
+        }
+      } catch {}
+    }
+
+    // Approach 3: If still no Japanese name, try genus-level lookup (e.g., "Cryptomeria" instead of "Cryptomeria japonica")
+    if (!result.japaneseName && scientificName.includes(' ')) {
+      const genus = scientificName.split(' ')[0];
+      try {
+        // Try Wikidata with genus name
+        const wdGenusResp = await fetch(`https://www.wikidata.org/w/api.php?action=wbgetentities&sites=enwiki&titles=${encodeURIComponent(genus)}&languages=ja&props=labels|sitelinks&format=json&origin=*`);
+        if (wdGenusResp.ok) {
+          const wdGenusData = await wdGenusResp.json();
+          const genusEntity = Object.values(wdGenusData.entities || {})[0];
+          if (genusEntity && genusEntity.id !== '-1') {
+            if (genusEntity.labels?.ja) result.japaneseName = genusEntity.labels.ja.value;
+            if (!result.wikipediaUrlJa && genusEntity.sitelinks?.jawiki) {
+              result.wikipediaUrlJa = `https://ja.wikipedia.org/wiki/${encodeURIComponent(genusEntity.sitelinks.jawiki.title)}`;
+              if (!result.japaneseName) result.japaneseName = genusEntity.sitelinks.jawiki.title;
+            }
+          }
+        }
+      } catch {}
+      // Also try ja.wikipedia search with genus
+      if (!result.japaneseName) {
+        try {
+          const jaGenusResp = await fetch(`https://ja.wikipedia.org/w/api.php?action=opensearch&search=${encodeURIComponent(genus)}&limit=1&namespace=0&format=json&origin=*`);
+          if (jaGenusResp.ok) {
+            const jaGenusData = await jaGenusResp.json();
+            if (jaGenusData[1] && jaGenusData[1].length > 0) {
+              result.japaneseName = jaGenusData[1][0];
+              result.wikipediaUrlJa = jaGenusData[3]?.[0] || result.wikipediaUrlJa;
+            }
+          }
+        } catch {}
+      }
+    }
 
     // Update cache
     const existing = getCachedSpeciesInfo(scientificName) || {};
@@ -835,6 +918,7 @@ function getConfidenceTier(confidence) {
 
 // ─── MAIN PIPELINE ───
 async function runIdentificationPipeline(imageBase64, lat, lng) {
+  console.log('[Pipeline] Starting multi-stage identification...');
   const stages = {
     preprocessing: true,
     sceneClassification: null,
@@ -847,32 +931,43 @@ async function runIdentificationPipeline(imageBase64, lat, lng) {
   // Stage 1: Preprocessing
   const images = preprocessImageForAI(imageBase64);
 
-  // Stage 2: Scene classification
-  stages.sceneClassification = await classifyScene(images.original, lat, lng);
+  // Stage 2: Scene classification (returns both scene type AND iNat results)
+  const { sceneType, inatResults } = await classifySceneWithResults(images.original, lat, lng);
+  stages.sceneClassification = sceneType;
 
-  // Stage 3 & 4: Cross-check identification
-  const crossResult = await runCrossCheck(images.original, lat, lng, stages.sceneClassification);
+  // Stage 3 & 4: Cross-check identification (reuse iNat results from Stage 2)
+  const crossResult = await runCrossCheck(images.original, lat, lng, sceneType, inatResults);
   stages.primaryAPI = crossResult.primarySource;
   stages.crossCheck = crossResult.crossCheckMatched;
 
   if (!crossResult.results || crossResult.results.length === 0) {
-    return null; // All APIs failed
+    console.warn('[Pipeline] All APIs failed — no results');
+    return null;
   }
 
   const topResult = crossResult.results[0];
+  console.log(`[Pipeline] Top result: ${topResult.scientificName} (${topResult.source})`);
 
   // Stage 5: GBIF enrichment
   let gbifData = null;
   if (topResult.scientificName) {
+    console.log('[Pipeline] Stage 5: GBIF enrichment...');
     gbifData = await enrichWithGBIF(topResult.scientificName);
-    if (gbifData) stages.gbifEnrichment = true;
+    if (gbifData) {
+      stages.gbifEnrichment = true;
+      console.log(`[Pipeline] GBIF: ${gbifData.family} / IUCN: ${gbifData.iucnStatus || 'N/A'}`);
+    }
   }
 
   // Stage 6: Wikipedia enrichment
   let wikiData = null;
   if (topResult.scientificName) {
+    console.log('[Pipeline] Stage 6: Wikipedia/Wikidata enrichment...');
     wikiData = await enrichWithWikipedia(topResult.scientificName);
-    if (wikiData) stages.wikipediaEnrichment = true;
+    if (wikiData) {
+      stages.wikipediaEnrichment = true;
+      console.log(`[Pipeline] Wikipedia: 和名=${wikiData.japaneseName || 'N/A'}`);
+    }
   }
 
   // Stage 7: Final confidence
@@ -1559,7 +1654,7 @@ function renderBsheetRegions(container) {
 }
 
 function renderBsheetSettings(container) {
-  const plantNetKey = localStorage.getItem('forestscope-plantnet-key') || '';
+  const plantNetKey = localStorage.getItem('forestscope-plantnet-key') || DEFAULT_PLANTNET_KEY;
   const useINat = localStorage.getItem('forestscope-use-inaturalist') !== 'false';
   const cesiumToken = localStorage.getItem('forestscope-cesium-token') || '';
 
